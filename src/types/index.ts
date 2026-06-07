@@ -50,6 +50,16 @@ export interface Clip {
   category: 'golden' | 'to-delete' | 'ad' | 'custom'
   createdAt: string
   tags: string[]
+  collectionId: string | null
+}
+
+export interface ClipCollection {
+  id: string
+  title: string
+  description: string
+  clipIds: string[]
+  createdAt: string
+  color: string
 }
 
 export interface ExportOptions {
@@ -63,6 +73,7 @@ export interface ExportOptions {
   includeAnnotations: boolean
   includeDeletedSegments: boolean
   includeHeader: boolean
+  clipGroupBy: 'category' | 'tag' | 'collection'
 }
 
 export interface ProjectVersion {
@@ -78,6 +89,7 @@ export interface ProjectState {
   segments: TranscriptSegment[]
   markers: Marker[]
   clips: Clip[]
+  collections: ClipCollection[]
   speakers: Speaker[]
   currentAudioFileId: string | null
   searchQuery: string

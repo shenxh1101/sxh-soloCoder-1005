@@ -40,6 +40,7 @@ export default function ExportPanel() {
     includeAnnotations: true,
     includeDeletedSegments: false,
     includeHeader: true,
+    clipGroupBy: 'category',
   })
 
   const currentSegments = project.segments
@@ -60,7 +61,12 @@ export default function ExportPanel() {
         title = '文稿预览'
         break
       case 'clips':
-        content = generateClipList(project.clips, project.segments)
+        content = generateClipList(
+          project.clips,
+          project.segments,
+          project.collections,
+          exportOptions.clipGroupBy
+        )
         title = '片段清单预览'
         break
       case 'subtitles':
@@ -99,7 +105,12 @@ export default function ExportPanel() {
         mimeType = 'text/plain'
         break
       case 'clips':
-        content = generateClipList(project.clips, project.segments)
+        content = generateClipList(
+          project.clips,
+          project.segments,
+          project.collections,
+          exportOptions.clipGroupBy
+        )
         filename = `${baseName}_片段清单.txt`
         mimeType = 'text/plain'
         break
@@ -339,6 +350,26 @@ export default function ExportPanel() {
                       <option value="txt">TXT 文本</option>
                       <option value="srt">SRT 字幕</option>
                       <option value="vtt">VTT 字幕</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-2">
+                      片段分组方式
+                    </label>
+                    <select
+                      value={exportOptions.clipGroupBy}
+                      onChange={(e) =>
+                        setExportOptions({
+                          ...exportOptions,
+                          clipGroupBy: e.target.value as any,
+                        })
+                      }
+                      className="w-full text-sm"
+                    >
+                      <option value="category">按分类分组</option>
+                      <option value="tag">按标签分组</option>
+                      <option value="collection">按合集分组</option>
                     </select>
                   </div>
 

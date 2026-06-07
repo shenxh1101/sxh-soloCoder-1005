@@ -16,6 +16,8 @@ import {
   Edit2,
   Users,
   Filter,
+  BarChart3,
+  ArrowRight,
 } from 'lucide-react'
 import { useAppDispatch, useAppSelector } from '@/store'
 import {
@@ -63,8 +65,56 @@ export default function TextPanel() {
   const [editingSpeakerName, setEditingSpeakerName] = useState('')
   const [mergeTargetSpeakerId, setMergeTargetSpeakerId] = useState<string | null>(null)
   const [showFilterMenu, setShowFilterMenu] = useState(false)
+  const [selectedSpeakerForView, setSelectedSpeakerForView] = useState<string | null>(null)
 
   const textContainerRef = useRef<HTMLDivElement>(null)
+
+  interface SpeakerStats {
+    speakerId: string
+    speakerName: string
+    speakerColor: string
+    totalSegments: number
+    totalDuration: number
+    segments: typeof currentSegments
+    highlightCount: number
+    deleteCount: number
+    adCount: number
+  }
+
+  const getSpeakerStats = (speakerId: string): SpeakerStats | null => {
+    const speaker = project.speakers.find((s) => s.id === speakerId)
+    if (!speaker) return null
+
+    const segments = currentSegments.filter((s) => s.speaker === speakerId)
+    const totalDuration = segments.reduce((sum, s) => sum + (s.endTime - s.startTime), 0)
+    const highlightCount = segments.filter((s) => s.isHighlight).length
+    const deleteCount = segments.filter((s) => s.isDeleted).length
+    const adCount = segments.filter((s) => s.isAd).length
+
+    return {
+      speakerId,
+      speakerName: speaker.name,
+      speakerColor: speaker.color,
+      totalSegments: segments.length,
+      totalDuration,
+      segments,
+      highlightCount,
+      deleteCount,
+      adCount,
+    }
+  }
+
+  const jumpToSegment = (segmentId: string) => {
+    const segment = currentSegments.find((s) => s.id === segmentId)
+    if (segment) {
+      dispatch(setCurrentTime(segment.startTime))
+      setSelectedSpeakerForView(null)
+      setTimeout(() => {
+        const element = document.getElementById(`segment-${segmentId}`)
+        element?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 100)
+    }
+  }
 
   const currentSegments = project.segments
     .filter((s) => s.audioFileId === project.currentAudioFileId)
@@ -98,14 +148,11 @@ export default function TextPanel() {
 
   const handleAddAndSwitchSpeaker = (name: string, segmentId: string) => {
     if (!name.trim()) return
-    dispatch(addSpeaker({ name: name.trim() }))
     
-    setTimeout(() => {
-      const newSpeaker = project.speakers[project.speakers.length - 1]
-      if (newSpeaker) {
-        dispatch(updateSegmentSpeaker({ id: segmentId, speaker: newSpeaker.id }))
-      }
-    }, 0)
+    const newSpeakerId = `spk_${project.speakers.length}`
+    
+    dispatch(addSpeaker({ name: name.trim() }))
+    dispatch(updateSegmentSpeaker({ id: segmentId, speaker: newSpeakerId }))
     
     setEditingSpeakerMode(null)
     setEditingSpeakerName('')
@@ -292,31 +339,46 @@ export default function TextPanel() {
                 </button>
                 <div className="border-t border-gray-700" />
                 {project.speakers.map((speaker) => (
-                  <button
+                  <div
                     key={speaker.id}
-                    className={clsx(
-                      'flex items-center gap-2 w-full px-3 py-2 text-xs text-left hover:bg-dark-300',
-                      project.filterSpeakerId === speaker.id &&
-                        'text-primary-400 bg-primary-400/10'
-                    )}
-                    onClick={() => {
-                      dispatch(
-                        setFilterSpeaker(
-                          project.filterSpeakerId === speaker.id ? null : speaker.id
-                        )
-                      )
-                      setShowFilterMenu(false)
-                    }}
+                    className="flex items-center gap-1 px-2 py-1 hover:bg-dark-300"
                   >
-                    <div
-                      className="w-2 h-2 rounded-full"
-                      style={{ backgroundColor: speaker.color }}
-                    />
-                    {speaker.name}
-                    <span className="ml-auto text-gray-500">
-                      {getSpeakerSegmentCount(speaker.id)}
-                    </span>
-                  </button>
+                    <button
+                      className={clsx(
+                        'flex items-center gap-2 flex-1 text-xs text-left py-1',
+                        project.filterSpeakerId === speaker.id &&
+                          'text-primary-400'
+                      )}
+                      onClick={() => {
+                        dispatch(
+                          setFilterSpeaker(
+                            project.filterSpeakerId === speaker.id ? null : speaker.id
+                          )
+                        )
+                        setShowFilterMenu(false)
+                      }}
+                    >
+                      <div
+                        className="w-2 h-2 rounded-full"
+                        style={{ backgroundColor: speaker.color }}
+                      />
+                      {speaker.name}
+                      <span className="ml-auto text-gray-500">
+                        {getSpeakerSegmentCount(speaker.id)}
+                      </span>
+                    </button>
+                    <button
+                      className="p-1 hover:bg-dark-100 rounded text-gray-400 hover:text-primary-400"
+                      title="查看说话人统计"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setSelectedSpeakerForView(speaker.id)
+                        setShowFilterMenu(false)
+                      }}
+                    >
+                      <BarChart3 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -361,6 +423,7 @@ export default function TextPanel() {
             return (
               <div
                 key={segment.id}
+                id={`segment-${segment.id}`}
                 className={clsx(
                   'p-3 rounded-lg border transition-all cursor-pointer group',
                   isActive && 'border-primary-500 bg-primary-500/10',
@@ -847,6 +910,170 @@ export default function TextPanel() {
           })
         )}
       </div>
+
+      {selectedSpeakerForView && (() => {
+        const stats = getSpeakerStats(selectedSpeakerForView)
+        if (!stats) return null
+
+        const maxTime = currentSegments.length > 0
+          ? Math.max(...currentSegments.map((s) => s.endTime))
+          : 1
+
+        return (
+          <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-dark-300 border border-gray-700 rounded-xl w-[560px] max-h-[85vh] flex flex-col animate-fade-in overflow-hidden">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-10 h-10 rounded-lg flex items-center justify-center"
+                    style={{ backgroundColor: `${stats.speakerColor}20` }}
+                  >
+                    <User className="w-5 h-5" style={{ color: stats.speakerColor }} />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-white">{stats.speakerName}</h3>
+                    <p className="text-xs text-gray-400">说话人统计视图</p>
+                  </div>
+                </div>
+                <button
+                  className="p-2 hover:bg-dark-200 rounded text-gray-400 hover:text-white"
+                  onClick={() => setSelectedSpeakerForView(null)}
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                <div className="grid grid-cols-4 gap-3">
+                  <div className="bg-dark-200 rounded-lg p-3 text-center">
+                    <p className="text-2xl font-bold text-white">{stats.totalSegments}</p>
+                    <p className="text-[10px] text-gray-500 mt-0.5">总段落</p>
+                  </div>
+                  <div className="bg-dark-200 rounded-lg p-3 text-center">
+                    <p className="text-2xl font-bold text-white">{formatTime(stats.totalDuration)}</p>
+                    <p className="text-[10px] text-gray-500 mt-0.5">总时长</p>
+                  </div>
+                  <div className="bg-dark-200 rounded-lg p-3 text-center">
+                    <p className="text-2xl font-bold text-yellow-400">{stats.highlightCount}</p>
+                    <p className="text-[10px] text-gray-500 mt-0.5">金句</p>
+                  </div>
+                  <div className="bg-dark-200 rounded-lg p-3 text-center">
+                    <p className="text-2xl font-bold text-red-400">{stats.deleteCount}</p>
+                    <p className="text-[10px] text-gray-500 mt-0.5">待删</p>
+                  </div>
+                </div>
+
+                {stats.adCount > 0 && (
+                  <div className="bg-purple-400/10 border border-purple-400/30 rounded-lg p-3">
+                    <div className="flex items-center gap-2">
+                      <Megaphone className="w-4 h-4 text-purple-400" />
+                      <span className="text-sm text-purple-300">
+                        包含 {stats.adCount} 段广告口播
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-xs font-medium text-gray-400">时间分布</h4>
+                    <span className="text-[10px] text-gray-500">
+                      占比 {((stats.totalDuration / maxTime) * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="relative h-8 bg-dark-200 rounded-lg overflow-hidden">
+                    {stats.segments.map((seg) => (
+                      <div
+                        key={seg.id}
+                        className="absolute top-0 bottom-0 rounded"
+                        style={{
+                          left: `${(seg.startTime / maxTime) * 100}%`,
+                          width: `${Math.max(2, ((seg.endTime - seg.startTime) / maxTime) * 100)}%`,
+                          backgroundColor: `${stats.speakerColor}${seg.isHighlight ? 'FF' : '80'}`,
+                        }}
+                        title={`${formatTime(seg.startTime)} - ${formatTime(seg.endTime)}`}
+                      />
+                    ))}
+                    <div
+                      className="absolute top-0 bottom-0 w-px bg-red-500 z-10"
+                      style={{ left: `${(playback.currentTime / maxTime) * 100}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between mt-1 text-[10px] text-gray-500">
+                    <span>0:00</span>
+                    <span>{formatTime(maxTime)}</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-xs font-medium text-gray-400">段落列表</h4>
+                    <span className="text-[10px] text-gray-500">
+                      共 {stats.segments.length} 段
+                    </span>
+                  </div>
+                  <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                    {stats.segments.map((seg, index) => (
+                      <div
+                        key={seg.id}
+                        className="flex items-start gap-2 p-2 bg-dark-200 rounded-lg hover:bg-dark-100 cursor-pointer transition-colors group"
+                        onClick={() => jumpToSegment(seg.id)}
+                      >
+                        <div
+                          className="w-1.5 h-1.5 rounded-full mt-2 flex-shrink-0"
+                          style={{ backgroundColor: stats.speakerColor }}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-gray-500">
+                              #{index + 1}
+                            </span>
+                            <span className="text-[10px] text-gray-400">
+                              {formatTime(seg.startTime)} - {formatTime(seg.endTime)}
+                            </span>
+                            {seg.isHighlight && (
+                              <Star className="w-3 h-3 text-yellow-400" />
+                            )}
+                            {seg.isDeleted && (
+                              <Trash2 className="w-3 h-3 text-red-400" />
+                            )}
+                            {seg.isAd && (
+                              <Megaphone className="w-3 h-3 text-purple-400" />
+                            )}
+                          </div>
+                          <p className="text-[11px] text-gray-300 line-clamp-1 mt-0.5">
+                            {seg.text}
+                          </p>
+                        </div>
+                        <ArrowRight className="w-3.5 h-3.5 text-gray-600 group-hover:text-primary-400 flex-shrink-0 mt-1.5" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between px-6 py-4 border-t border-gray-700 gap-3">
+                <button
+                  className="btn btn-secondary flex-1"
+                  onClick={() => {
+                    dispatch(setFilterSpeaker(selectedSpeakerForView))
+                    setSelectedSpeakerForView(null)
+                  }}
+                >
+                  <Filter className="w-3.5 h-3.5" />
+                  只看此人
+                </button>
+                <button
+                  className="btn btn-primary flex-1"
+                  onClick={() => setSelectedSpeakerForView(null)}
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

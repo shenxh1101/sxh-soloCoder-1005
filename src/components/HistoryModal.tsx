@@ -71,6 +71,7 @@ export default function HistoryModal({ onClose }: HistoryModalProps) {
         segments: snapshot.segments,
         markers: snapshot.markers,
         clips: snapshot.clips,
+        collections: snapshot.collections || [],
         speakers: snapshot.speakers,
         currentAudioFileId: snapshot.currentAudioFileId,
         selectedSegmentIds: snapshot.selectedSegmentIds || [],

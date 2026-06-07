@@ -1,4 +1,4 @@
-import type { TranscriptSegment, Clip, ExportOptions, Marker } from '@/types'
+import type { TranscriptSegment, Clip, ExportOptions, Marker, ClipCollection } from '@/types'
 import { formatTime, formatSRTTime, formatVTTTime } from './time'
 
 export function generateTranscript(
@@ -99,40 +99,108 @@ export function generateVTT(segments: TranscriptSegment[]): string {
   return vtt
 }
 
-export function generateClipList(clips: Clip[], segments: TranscriptSegment[]): string {
+export function generateClipList(
+  clips: Clip[],
+  segments: TranscriptSegment[],
+  collections: ClipCollection[],
+  groupBy: 'category' | 'tag' | 'collection' = 'category'
+): string {
   let list = ''
+
+  const groupLabels = {
+    category: '分类',
+    tag: '标签',
+    collection: '合集',
+  }
 
   list += '='.repeat(60) + '\n'
   list += '片段清单\n'
   list += `生成时间: ${new Date().toLocaleString('zh-CN')}\n`
+  list += `分组方式: 按${groupLabels[groupBy]}\n`
   list += '='.repeat(60) + '\n\n'
 
-  const categories = [
-    { key: 'golden', label: '金句收藏' },
-    { key: 'to-delete', label: '待删片段' },
-    { key: 'ad', label: '广告口播' },
-    { key: 'custom', label: '自定义' },
-  ]
+  const formatClipEntry = (clip: Clip, index: number) => {
+    const clipSegments = segments.filter((s) => clip.segmentIds.includes(s.id))
+    const clipText = clipSegments.map((s) => s.text).join(' ')
 
-  categories.forEach((category) => {
-    const categoryClips = clips.filter((c) => c.category === category.key)
-    if (categoryClips.length === 0) return
+    let entry = ''
+    entry += `${index + 1}. ${clip.title}\n`
+    entry += `   时间: ${formatTime(clip.startTime)} - ${formatTime(clip.endTime)} `
+    entry += `(时长: ${formatTime(clip.endTime - clip.startTime)})\n`
+    if (clip.description) {
+      entry += `   描述: ${clip.description}\n`
+    }
+    if (clip.tags.length > 0) {
+      entry += `   标签: ${clip.tags.join(', ')}\n`
+    }
+    entry += `   内容: ${clipText.slice(0, 100)}${clipText.length > 100 ? '...' : ''}\n\n`
+    return entry
+  }
 
-    list += `## ${category.label} (${categoryClips.length})\n\n`
+  if (groupBy === 'category') {
+    const categories = [
+      { key: 'golden', label: '金句收藏' },
+      { key: 'to-delete', label: '待删片段' },
+      { key: 'ad', label: '广告口播' },
+      { key: 'custom', label: '自定义' },
+    ]
 
-    categoryClips.forEach((clip, index) => {
-      const clipSegments = segments.filter((s) => clip.segmentIds.includes(s.id))
-      const clipText = clipSegments.map((s) => s.text).join(' ')
+    categories.forEach((category) => {
+      const categoryClips = clips.filter((c) => c.category === category.key)
+      if (categoryClips.length === 0) return
 
-      list += `${index + 1}. ${clip.title}\n`
-      list += `   时间: ${formatTime(clip.startTime)} - ${formatTime(clip.endTime)} `
-      list += `(时长: ${formatTime(clip.endTime - clip.startTime)})\n`
-      if (clip.description) {
-        list += `   描述: ${clip.description}\n`
-      }
-      list += `   内容: ${clipText.slice(0, 100)}${clipText.length > 100 ? '...' : ''}\n\n`
+      list += `## ${category.label} (${categoryClips.length})\n\n`
+
+      categoryClips.forEach((clip, index) => {
+        list += formatClipEntry(clip, index)
+      })
     })
-  })
+  } else if (groupBy === 'tag') {
+    const allTags = new Set<string>()
+    clips.forEach((c) => c.tags.forEach((t) => allTags.add(t)))
+    const tagsArray = Array.from(allTags).sort()
+    const untaggedClips = clips.filter((c) => c.tags.length === 0)
+
+    tagsArray.forEach((tag) => {
+      const tagClips = clips.filter((c) => c.tags.includes(tag))
+      if (tagClips.length === 0) return
+
+      list += `## ${tag} (${tagClips.length})\n\n`
+
+      tagClips.forEach((clip, index) => {
+        list += formatClipEntry(clip, index)
+      })
+    })
+
+    if (untaggedClips.length > 0) {
+      list += `## 无标签 (${untaggedClips.length})\n\n`
+
+      untaggedClips.forEach((clip, index) => {
+        list += formatClipEntry(clip, index)
+      })
+    }
+  } else if (groupBy === 'collection') {
+    const clipsWithoutCollection = clips.filter((c) => !c.collectionId)
+
+    collections.forEach((collection) => {
+      const collectionClips = clips.filter((c) => c.collectionId === collection.id)
+      if (collectionClips.length === 0) return
+
+      list += `## ${collection.title} (${collectionClips.length})\n\n`
+
+      collectionClips.forEach((clip, index) => {
+        list += formatClipEntry(clip, index)
+      })
+    })
+
+    if (clipsWithoutCollection.length > 0) {
+      list += `## 未分类 (${clipsWithoutCollection.length})\n\n`
+
+      clipsWithoutCollection.forEach((clip, index) => {
+        list += formatClipEntry(clip, index)
+      })
+    }
+  }
 
   return list
 }

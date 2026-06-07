@@ -1,6 +1,6 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit'
 import { v4 as uuidv4 } from 'uuid'
-import type { AudioFile, TranscriptSegment, Marker, Clip, Speaker } from '@/types'
+import type { AudioFile, TranscriptSegment, Marker, Clip, ClipCollection, Speaker } from '@/types'
 import { generateMockTranscript } from '@/utils/mockData'
 
 interface ProjectState {
@@ -8,6 +8,7 @@ interface ProjectState {
   segments: TranscriptSegment[]
   markers: Marker[]
   clips: Clip[]
+  collections: ClipCollection[]
   speakers: Speaker[]
   currentAudioFileId: string | null
   searchQuery: string
@@ -21,6 +22,7 @@ const initialState: ProjectState = {
   segments: [],
   markers: [],
   clips: [],
+  collections: [],
   speakers: [
     { id: 'spk_0', name: '说话人 1', color: '#3b82f6' },
     { id: 'spk_1', name: '说话人 2', color: '#10b981' },
@@ -267,6 +269,7 @@ const projectSlice = createSlice({
         category: action.payload.category,
         createdAt: new Date().toISOString(),
         tags: [],
+        collectionId: null,
       }
       state.clips.push(clip)
     },
@@ -282,13 +285,118 @@ const projectSlice = createSlice({
         title?: string
         description?: string
         category?: 'golden' | 'to-delete' | 'ad' | 'custom'
+        tags?: string[]
+        collectionId?: string | null
       }>
     ) => {
       const clip = state.clips.find((c) => c.id === action.payload.id)
       if (clip) {
-        if (action.payload.title) clip.title = action.payload.title
-        if (action.payload.description) clip.description = action.payload.description
-        if (action.payload.category) clip.category = action.payload.category
+        if (action.payload.title !== undefined) clip.title = action.payload.title
+        if (action.payload.description !== undefined) clip.description = action.payload.description
+        if (action.payload.category !== undefined) clip.category = action.payload.category
+        if (action.payload.tags !== undefined) clip.tags = action.payload.tags
+        if (action.payload.collectionId !== undefined) clip.collectionId = action.payload.collectionId
+      }
+    },
+
+    batchUpdateClips: (
+      state,
+      action: PayloadAction<{
+        clipIds: string[]
+        category?: 'golden' | 'to-delete' | 'ad' | 'custom'
+        addTags?: string[]
+        removeTags?: string[]
+        collectionId?: string | null
+      }>
+    ) => {
+      const { clipIds, category, addTags, removeTags, collectionId } = action.payload
+      state.clips.forEach((clip) => {
+        if (clipIds.includes(clip.id)) {
+          if (category !== undefined) {
+            clip.category = category
+          }
+          if (addTags) {
+            const newTags = [...new Set([...clip.tags, ...addTags])]
+            clip.tags = newTags
+          }
+          if (removeTags) {
+            clip.tags = clip.tags.filter((t) => !removeTags.includes(t))
+          }
+          if (collectionId !== undefined) {
+            clip.collectionId = collectionId
+          }
+        }
+      })
+    },
+
+    addCollection: (
+      state,
+      action: PayloadAction<{
+        title: string
+        description?: string
+        clipIds?: string[]
+      }>
+    ) => {
+      const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
+      const collection: ClipCollection = {
+        id: uuidv4(),
+        title: action.payload.title,
+        description: action.payload.description || '',
+        clipIds: action.payload.clipIds || [],
+        createdAt: new Date().toISOString(),
+        color: colors[state.collections.length % colors.length],
+      }
+      state.collections.push(collection)
+
+      if (action.payload.clipIds) {
+        state.clips.forEach((clip) => {
+          if (action.payload.clipIds!.includes(clip.id)) {
+            clip.collectionId = collection.id
+          }
+        })
+      }
+    },
+
+    removeCollection: (state, action: PayloadAction<string>) => {
+      const collectionId = action.payload
+      state.collections = state.collections.filter((c) => c.id !== collectionId)
+      state.clips.forEach((clip) => {
+        if (clip.collectionId === collectionId) {
+          clip.collectionId = null
+        }
+      })
+    },
+
+    updateCollection: (
+      state,
+      action: PayloadAction<{
+        id: string
+        title?: string
+        description?: string
+        clipIds?: string[]
+      }>
+    ) => {
+      const collection = state.collections.find((c) => c.id === action.payload.id)
+      if (!collection) return
+
+      if (action.payload.title !== undefined) {
+        collection.title = action.payload.title
+      }
+      if (action.payload.description !== undefined) {
+        collection.description = action.payload.description
+      }
+      if (action.payload.clipIds !== undefined) {
+        state.clips.forEach((clip) => {
+          if (clip.collectionId === collection.id) {
+            clip.collectionId = null
+          }
+        })
+        collection.clipIds = action.payload.clipIds
+        state.clips.forEach((clip) => {
+          if (action.payload.clipIds!.includes(clip.id)) {
+            clip.collectionId = collection.id
+          }
+        })
       }
     },
 
@@ -351,6 +459,7 @@ const projectSlice = createSlice({
         segments: TranscriptSegment[]
         markers: Marker[]
         clips: Clip[]
+        collections?: ClipCollection[]
         speakers: Speaker[]
         currentAudioFileId?: string | null
         selectedSegmentIds?: string[]
@@ -361,6 +470,7 @@ const projectSlice = createSlice({
       state.segments = action.payload.segments
       state.markers = action.payload.markers
       state.clips = action.payload.clips
+      state.collections = action.payload.collections || []
       state.speakers = action.payload.speakers
       if (action.payload.currentAudioFileId !== undefined) {
         state.currentAudioFileId = action.payload.currentAudioFileId
@@ -394,6 +504,10 @@ export const {
   addClip,
   removeClip,
   updateClip,
+  batchUpdateClips,
+  addCollection,
+  removeCollection,
+  updateCollection,
   updateSpeaker,
   addSpeaker,
   mergeSpeakers,

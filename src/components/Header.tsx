@@ -34,6 +34,7 @@ export default function Header() {
             segments: project.segments,
             markers: project.markers,
             clips: project.clips,
+            collections: project.collections,
             speakers: project.speakers,
             currentAudioFileId: project.currentAudioFileId,
             selectedSegmentIds: project.selectedSegmentIds,
