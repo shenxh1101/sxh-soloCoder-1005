@@ -13,6 +13,7 @@ interface ProjectState {
   searchQuery: string
   isGeneratingTranscript: boolean
   selectedSegmentIds: string[]
+  filterSpeakerId: string | null
 }
 
 const initialState: ProjectState = {
@@ -29,6 +30,7 @@ const initialState: ProjectState = {
   searchQuery: '',
   isGeneratingTranscript: false,
   selectedSegmentIds: [],
+  filterSpeakerId: null,
 }
 
 const projectSlice = createSlice({
@@ -246,6 +248,8 @@ const projectSlice = createSlice({
         category: 'golden' | 'to-delete' | 'ad' | 'custom'
         title: string
         description: string
+        startTime?: number
+        endTime?: number
       }>
     ) => {
       const segments = state.segments.filter((s) => action.payload.segmentIds.includes(s.id))
@@ -256,8 +260,8 @@ const projectSlice = createSlice({
         id: uuidv4(),
         segmentIds: action.payload.segmentIds,
         audioFileId: sortedSegments[0].audioFileId,
-        startTime: sortedSegments[0].startTime,
-        endTime: sortedSegments[sortedSegments.length - 1].endTime,
+        startTime: action.payload.startTime ?? sortedSegments[0].startTime,
+        endTime: action.payload.endTime ?? sortedSegments[sortedSegments.length - 1].endTime,
         title: action.payload.title,
         description: action.payload.description,
         category: action.payload.category,
@@ -304,8 +308,32 @@ const projectSlice = createSlice({
       })
     },
 
+    mergeSpeakers: (
+      state,
+      action: PayloadAction<{ sourceSpeakerId: string; targetSpeakerId: string }>
+    ) => {
+      const { sourceSpeakerId, targetSpeakerId } = action.payload
+      if (sourceSpeakerId === targetSpeakerId) return
+
+      state.segments.forEach((segment) => {
+        if (segment.speaker === sourceSpeakerId) {
+          segment.speaker = targetSpeakerId
+        }
+      })
+
+      state.speakers = state.speakers.filter((s) => s.id !== sourceSpeakerId)
+
+      if (state.filterSpeakerId === sourceSpeakerId) {
+        state.filterSpeakerId = targetSpeakerId
+      }
+    },
+
     setSearchQuery: (state, action: PayloadAction<string>) => {
       state.searchQuery = action.payload
+    },
+
+    setFilterSpeaker: (state, action: PayloadAction<string | null>) => {
+      state.filterSpeakerId = action.payload
     },
 
     setSelectedSegments: (state, action: PayloadAction<string[]>) => {
@@ -326,6 +354,7 @@ const projectSlice = createSlice({
         speakers: Speaker[]
         currentAudioFileId?: string | null
         selectedSegmentIds?: string[]
+        filterSpeakerId?: string | null
       }>
     ) => {
       state.audioFiles = action.payload.audioFiles
@@ -338,6 +367,9 @@ const projectSlice = createSlice({
       }
       if (action.payload.selectedSegmentIds !== undefined) {
         state.selectedSegmentIds = action.payload.selectedSegmentIds
+      }
+      if (action.payload.filterSpeakerId !== undefined) {
+        state.filterSpeakerId = action.payload.filterSpeakerId
       }
     },
   },
@@ -364,7 +396,9 @@ export const {
   updateClip,
   updateSpeaker,
   addSpeaker,
+  mergeSpeakers,
   setSearchQuery,
+  setFilterSpeaker,
   setSelectedSegments,
   clearSelectedSegments,
   loadProjectState,

@@ -12,6 +12,10 @@ import {
   ChevronDown,
   ChevronUp,
   Check,
+  Plus,
+  Edit2,
+  Users,
+  Filter,
 } from 'lucide-react'
 import { useAppDispatch, useAppSelector } from '@/store'
 import {
@@ -26,6 +30,10 @@ import {
   setSearchQuery,
   setSelectedSegments,
   clearSelectedSegments,
+  updateSpeaker,
+  addSpeaker,
+  mergeSpeakers,
+  setFilterSpeaker,
 } from '@/store/slices/projectSlice'
 import { setCurrentTime } from '@/store/slices/playbackSlice'
 import { formatTime } from '@/utils/time'
@@ -47,6 +55,14 @@ export default function TextPanel() {
     type: 'comment' | 'noise' | 'important' | 'todo'
     content: string
   } | null>(null)
+  const [editingSpeakerMode, setEditingSpeakerMode] = useState<{
+    type: 'rename' | 'new' | 'merge'
+    currentSegmentId: string
+    currentSpeakerId: string
+  } | null>(null)
+  const [editingSpeakerName, setEditingSpeakerName] = useState('')
+  const [mergeTargetSpeakerId, setMergeTargetSpeakerId] = useState<string | null>(null)
+  const [showFilterMenu, setShowFilterMenu] = useState(false)
 
   const textContainerRef = useRef<HTMLDivElement>(null)
 
@@ -55,6 +71,9 @@ export default function TextPanel() {
     .sort((a, b) => a.startTime - b.startTime)
 
   const filteredSegments = currentSegments.filter((segment) => {
+    if (project.filterSpeakerId && segment.speaker !== project.filterSpeakerId) {
+      return false
+    }
     if (!project.searchQuery) return true
     const query = project.searchQuery.toLowerCase()
     return (
@@ -65,6 +84,55 @@ export default function TextPanel() {
         .includes(query)
     )
   })
+
+  const getSpeakerSegmentCount = (speakerId: string) => {
+    return currentSegments.filter((s) => s.speaker === speakerId).length
+  }
+
+  const handleRenameSpeaker = (speakerId: string, newName: string) => {
+    if (!newName.trim()) return
+    dispatch(updateSpeaker({ id: speakerId, name: newName.trim() }))
+    setEditingSpeakerMode(null)
+    setEditingSpeakerName('')
+  }
+
+  const handleAddAndSwitchSpeaker = (name: string, segmentId: string) => {
+    if (!name.trim()) return
+    dispatch(addSpeaker({ name: name.trim() }))
+    
+    setTimeout(() => {
+      const newSpeaker = project.speakers[project.speakers.length - 1]
+      if (newSpeaker) {
+        dispatch(updateSegmentSpeaker({ id: segmentId, speaker: newSpeaker.id }))
+      }
+    }, 0)
+    
+    setEditingSpeakerMode(null)
+    setEditingSpeakerName('')
+    setShowSpeakerMenu(null)
+  }
+
+  const handleMergeSpeakers = (sourceId: string, targetId: string) => {
+    if (sourceId === targetId) return
+    
+    const sourceName = project.speakers.find((s) => s.id === sourceId)?.name
+    const targetName = project.speakers.find((s) => s.id === targetId)?.name
+    const affectedCount = getSpeakerSegmentCount(sourceId)
+    
+    const confirmed = window.confirm(
+      `确定要将 "${sourceName}" 合并到 "${targetName}" 吗？\n\n` +
+      `这将影响 ${affectedCount} 段文稿，合并后 "${sourceName}" 将被删除，` +
+      `所有相关段落都将标记为 "${targetName}"。\n\n此操作不可撤销。`
+    )
+    
+    if (confirmed) {
+      dispatch(mergeSpeakers({ sourceSpeakerId: sourceId, targetSpeakerId: targetId }))
+    }
+    
+    setEditingSpeakerMode(null)
+    setMergeTargetSpeakerId(null)
+    setShowSpeakerMenu(null)
+  }
 
   const highlightText = (text: string, query: string) => {
     if (!query) return text
@@ -181,7 +249,7 @@ export default function TextPanel() {
               placeholder="搜索关键词..."
               value={project.searchQuery}
               onChange={(e) => dispatch(setSearchQuery(e.target.value))}
-              className="pl-8 py-1.5 text-sm w-56 bg-dark-100"
+              className="pl-8 py-1.5 text-sm w-48 bg-dark-100"
             />
             {project.searchQuery && (
               <button
@@ -190,6 +258,67 @@ export default function TextPanel() {
               >
                 <X className="w-3.5 h-3.5" />
               </button>
+            )}
+          </div>
+
+          <div className="relative">
+            <button
+              className={clsx(
+                'btn text-xs py-1.5',
+                project.filterSpeakerId ? 'btn-primary' : 'btn-secondary'
+              )}
+              onClick={() => setShowFilterMenu(!showFilterMenu)}
+            >
+              <Filter className="w-3.5 h-3.5" />
+              {project.filterSpeakerId
+                ? project.speakers.find((s) => s.id === project.filterSpeakerId)?.name || '筛选'
+                : '按说话人筛选'}
+            </button>
+
+            {showFilterMenu && (
+              <div className="absolute right-0 top-full mt-1 bg-dark-100 border border-gray-700 rounded-lg overflow-hidden z-30 min-w-[160px]">
+                <button
+                  className={clsx(
+                    'flex items-center gap-2 w-full px-3 py-2 text-xs text-left hover:bg-dark-300',
+                    !project.filterSpeakerId && 'text-primary-400 bg-primary-400/10'
+                  )}
+                  onClick={() => {
+                    dispatch(setFilterSpeaker(null))
+                    setShowFilterMenu(false)
+                  }}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  全部说话人
+                </button>
+                <div className="border-t border-gray-700" />
+                {project.speakers.map((speaker) => (
+                  <button
+                    key={speaker.id}
+                    className={clsx(
+                      'flex items-center gap-2 w-full px-3 py-2 text-xs text-left hover:bg-dark-300',
+                      project.filterSpeakerId === speaker.id &&
+                        'text-primary-400 bg-primary-400/10'
+                    )}
+                    onClick={() => {
+                      dispatch(
+                        setFilterSpeaker(
+                          project.filterSpeakerId === speaker.id ? null : speaker.id
+                        )
+                      )
+                      setShowFilterMenu(false)
+                    }}
+                  >
+                    <div
+                      className="w-2 h-2 rounded-full"
+                      style={{ backgroundColor: speaker.color }}
+                    />
+                    {speaker.name}
+                    <span className="ml-auto text-gray-500">
+                      {getSpeakerSegmentCount(speaker.id)}
+                    </span>
+                  </button>
+                ))}
+              </div>
             )}
           </div>
 
@@ -268,32 +397,247 @@ export default function TextPanel() {
                         </button>
 
                         {showSpeakerMenu === segment.id && (
-                          <div className="absolute left-0 top-full mt-1 bg-dark-100 border border-gray-700 rounded-lg overflow-hidden z-20 min-w-[120px]">
-                            {project.speakers.map((spk) => (
-                              <button
-                                key={spk.id}
-                                className="flex items-center gap-2 w-full px-3 py-2 text-xs text-left hover:bg-dark-300"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  dispatch(
-                                    updateSegmentSpeaker({
-                                      id: segment.id,
-                                      speaker: spk.id,
-                                    })
-                                  )
-                                  setShowSpeakerMenu(null)
-                                }}
-                              >
-                                <div
-                                  className="w-2 h-2 rounded-full"
-                                  style={{ backgroundColor: spk.color }}
-                                />
-                                {spk.name}
-                                {spk.id === segment.speaker && (
-                                  <Check className="w-3 h-3 ml-auto text-primary-400" />
+                          <div className="absolute left-0 top-full mt-1 bg-dark-100 border border-gray-700 rounded-lg overflow-hidden z-20 min-w-[180px]">
+                            {editingSpeakerMode?.currentSegmentId === segment.id ? (
+                              <div className="p-2 space-y-2">
+                                {editingSpeakerMode.type === 'rename' && (
+                                  <>
+                                    <p className="text-[10px] text-gray-400 px-1">
+                                      重命名 "{speaker?.name}"
+                                    </p>
+                                    <input
+                                      type="text"
+                                      value={editingSpeakerName}
+                                      onChange={(e) => setEditingSpeakerName(e.target.value)}
+                                      className="w-full text-xs py-1.5"
+                                      placeholder="输入新名称"
+                                      autoFocus
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          handleRenameSpeaker(
+                                            editingSpeakerMode.currentSpeakerId,
+                                            editingSpeakerName
+                                          )
+                                        } else if (e.key === 'Escape') {
+                                          setEditingSpeakerMode(null)
+                                          setEditingSpeakerName('')
+                                        }
+                                      }}
+                                    />
+                                    <div className="flex gap-1">
+                                      <button
+                                        className="btn btn-primary text-xs py-1 px-2 flex-1"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleRenameSpeaker(
+                                            editingSpeakerMode.currentSpeakerId,
+                                            editingSpeakerName
+                                          )
+                                        }}
+                                      >
+                                        保存
+                                      </button>
+                                      <button
+                                        className="btn btn-secondary text-xs py-1 px-2 flex-1"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          setEditingSpeakerMode(null)
+                                          setEditingSpeakerName('')
+                                        }}
+                                      >
+                                        取消
+                                      </button>
+                                    </div>
+                                  </>
                                 )}
-                              </button>
-                            ))}
+
+                                {editingSpeakerMode.type === 'new' && (
+                                  <>
+                                    <p className="text-[10px] text-gray-400 px-1">
+                                      新建说话人
+                                    </p>
+                                    <input
+                                      type="text"
+                                      value={editingSpeakerName}
+                                      onChange={(e) => setEditingSpeakerName(e.target.value)}
+                                      className="w-full text-xs py-1.5"
+                                      placeholder="输入真实姓名"
+                                      autoFocus
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          handleAddAndSwitchSpeaker(
+                                            editingSpeakerName,
+                                            segment.id
+                                          )
+                                        } else if (e.key === 'Escape') {
+                                          setEditingSpeakerMode(null)
+                                          setEditingSpeakerName('')
+                                        }
+                                      }}
+                                    />
+                                    <div className="flex gap-1">
+                                      <button
+                                        className="btn btn-primary text-xs py-1 px-2 flex-1"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleAddAndSwitchSpeaker(
+                                            editingSpeakerName,
+                                            segment.id
+                                          )
+                                        }}
+                                      >
+                                        创建并应用
+                                      </button>
+                                      <button
+                                        className="btn btn-secondary text-xs py-1 px-2 flex-1"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          setEditingSpeakerMode(null)
+                                          setEditingSpeakerName('')
+                                        }}
+                                      >
+                                        取消
+                                      </button>
+                                    </div>
+                                  </>
+                                )}
+
+                                {editingSpeakerMode.type === 'merge' && (
+                                  <>
+                                    <p className="text-[10px] text-gray-400 px-1">
+                                      将 "{speaker?.name}" 合并到：
+                                    </p>
+                                    <p className="text-[10px] text-yellow-400 px-1">
+                                      影响 {getSpeakerSegmentCount(editingSpeakerMode.currentSpeakerId)} 段
+                                    </p>
+                                    <div className="max-h-32 overflow-y-auto space-y-0.5">
+                                      {project.speakers
+                                        .filter((s) => s.id !== editingSpeakerMode.currentSpeakerId)
+                                        .map((spk) => (
+                                          <button
+                                            key={spk.id}
+                                            className="flex items-center gap-2 w-full px-2 py-1.5 text-xs text-left hover:bg-dark-300 rounded"
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              setMergeTargetSpeakerId(spk.id)
+                                            }}
+                                          >
+                                            <div
+                                              className="w-2 h-2 rounded-full"
+                                              style={{ backgroundColor: spk.color }}
+                                            />
+                                            {spk.name}
+                                            {mergeTargetSpeakerId === spk.id && (
+                                              <Check className="w-3 h-3 ml-auto text-primary-400" />
+                                            )}
+                                          </button>
+                                        ))}
+                                    </div>
+                                    <div className="flex gap-1 mt-2">
+                                      <button
+                                        className="btn btn-primary text-xs py-1 px-2 flex-1"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          if (mergeTargetSpeakerId) {
+                                            handleMergeSpeakers(
+                                              editingSpeakerMode.currentSpeakerId,
+                                              mergeTargetSpeakerId
+                                            )
+                                          }
+                                        }}
+                                        disabled={!mergeTargetSpeakerId}
+                                      >
+                                        确认合并
+                                      </button>
+                                      <button
+                                        className="btn btn-secondary text-xs py-1 px-2 flex-1"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          setEditingSpeakerMode(null)
+                                          setMergeTargetSpeakerId(null)
+                                        }}
+                                      >
+                                        取消
+                                      </button>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            ) : (
+                              <>
+                                {project.speakers.map((spk) => (
+                                  <button
+                                    key={spk.id}
+                                    className="flex items-center gap-2 w-full px-3 py-2 text-xs text-left hover:bg-dark-300"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      dispatch(
+                                        updateSegmentSpeaker({
+                                          id: segment.id,
+                                          speaker: spk.id,
+                                        })
+                                      )
+                                      setShowSpeakerMenu(null)
+                                    }}
+                                  >
+                                    <div
+                                      className="w-2 h-2 rounded-full"
+                                      style={{ backgroundColor: spk.color }}
+                                    />
+                                    {spk.name}
+                                    {spk.id === segment.speaker && (
+                                      <Check className="w-3 h-3 ml-auto text-primary-400" />
+                                    )}
+                                  </button>
+                                ))}
+                                <div className="border-t border-gray-700" />
+                                <button
+                                  className="flex items-center gap-2 w-full px-3 py-2 text-xs text-left hover:bg-dark-300 text-primary-400"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setEditingSpeakerMode({
+                                      type: 'rename',
+                                      currentSegmentId: segment.id,
+                                      currentSpeakerId: segment.speaker,
+                                    })
+                                    setEditingSpeakerName(speaker?.name || '')
+                                  }}
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                  重命名此说话人
+                                </button>
+                                <button
+                                  className="flex items-center gap-2 w-full px-3 py-2 text-xs text-left hover:bg-dark-300 text-green-400"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setEditingSpeakerMode({
+                                      type: 'new',
+                                      currentSegmentId: segment.id,
+                                      currentSpeakerId: segment.speaker,
+                                    })
+                                    setEditingSpeakerName('')
+                                  }}
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  新建真实姓名
+                                </button>
+                                <button
+                                  className="flex items-center gap-2 w-full px-3 py-2 text-xs text-left hover:bg-dark-300 text-orange-400"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setEditingSpeakerMode({
+                                      type: 'merge',
+                                      currentSegmentId: segment.id,
+                                      currentSpeakerId: segment.speaker,
+                                    })
+                                    setMergeTargetSpeakerId(null)
+                                  }}
+                                >
+                                  <Merge className="w-3.5 h-3.5" />
+                                  合并到其他说话人
+                                </button>
+                              </>
+                            )}
                           </div>
                         )}
                       </div>

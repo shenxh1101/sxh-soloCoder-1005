@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Star,
   Trash2,
@@ -9,6 +9,10 @@ import {
   Edit2,
   Clock,
   Play,
+  ChevronLeft,
+  ChevronRight,
+  AlertTriangle,
+  FileText,
 } from 'lucide-react'
 import { useAppDispatch, useAppSelector } from '@/store'
 import { addClip, removeClip, updateClip } from '@/store/slices/projectSlice'
@@ -37,20 +41,48 @@ export default function ClipsPanel() {
     title: '',
     description: '',
   })
+  const [manualStartTime, setManualStartTime] = useState(0)
+  const [manualEndTime, setManualEndTime] = useState(0)
+  const [manualSegmentIds, setManualSegmentIds] = useState<string[]>([])
+  const [hasTranscript, setHasTranscript] = useState(true)
 
   const filteredClips =
     activeCategory === 'all'
       ? project.clips
       : project.clips.filter((c) => c.category === activeCategory)
 
+  const currentAudioSegments = project.segments
+    .filter((s) => s.audioFileId === project.currentAudioFileId)
+    .sort((a, b) => a.startTime - b.startTime)
+
+  useEffect(() => {
+    if (showAddModal) {
+      const hasSegments = currentAudioSegments.length > 0
+      setHasTranscript(hasSegments)
+
+      if (hasSegments) {
+        const targetIds = getTargetSegments()
+        setManualSegmentIds(targetIds)
+
+        const segments = project.segments.filter((s) => targetIds.includes(s.id))
+        if (segments.length > 0) {
+          const startTime = Math.min(...segments.map((s) => s.startTime))
+          const endTime = Math.max(...segments.map((s) => s.endTime))
+          setManualStartTime(startTime)
+          setManualEndTime(endTime)
+        }
+      }
+    }
+  }, [showAddModal])
+
   const getTargetSegments = () => {
     if (project.selectedSegmentIds.length > 0) {
       return project.selectedSegmentIds
     }
 
-    const currentAudioSegments = project.segments
-      .filter((s) => s.audioFileId === project.currentAudioFileId)
-      .sort((a, b) => a.startTime - b.startTime)
+    if (currentAudioSegments.length === 0) {
+      return []
+    }
 
     const currentTime = playback.currentTime
     let nearestSegment = currentAudioSegments.find(
@@ -72,6 +104,42 @@ export default function ClipsPanel() {
     return currentAudioSegments.slice(startIndex, endIndex).map((s) => s.id)
   }
 
+  const toggleSegmentInClip = (segmentId: string) => {
+    setManualSegmentIds((prev) => {
+      if (prev.includes(segmentId)) {
+        const newIds = prev.filter((id) => id !== segmentId)
+        updateTimeRangeFromSegments(newIds)
+        return newIds
+      } else {
+        const newIds = [...prev, segmentId].sort((a, b) => {
+          const segA = currentAudioSegments.find((s) => s.id === a)
+          const segB = currentAudioSegments.find((s) => s.id === b)
+          return (segA?.startTime || 0) - (segB?.startTime || 0)
+        })
+        updateTimeRangeFromSegments(newIds)
+        return newIds
+      }
+    })
+  }
+
+  const updateTimeRangeFromSegments = (segmentIds: string[]) => {
+    const segments = project.segments.filter((s) => segmentIds.includes(s.id))
+    if (segments.length > 0) {
+      const startTime = Math.min(...segments.map((s) => s.startTime))
+      const endTime = Math.max(...segments.map((s) => s.endTime))
+      setManualStartTime(startTime)
+      setManualEndTime(endTime)
+    }
+  }
+
+  const adjustTime = (field: 'start' | 'end', delta: number) => {
+    if (field === 'start') {
+      setManualStartTime((prev) => Math.max(0, Math.min(prev + delta, manualEndTime - 0.1)))
+    } else {
+      setManualEndTime((prev) => Math.max(manualStartTime + 0.1, prev + delta))
+    }
+  }
+
   const handleAddClip = () => {
     if (!newClip.title.trim()) {
       alert('请输入片段标题')
@@ -83,25 +151,32 @@ export default function ClipsPanel() {
       return
     }
 
-    const segmentIds = getTargetSegments()
-    const segments = project.segments.filter((s) => segmentIds.includes(s.id))
+    if (currentAudioSegments.length === 0) {
+      alert('当前音频还没有文稿，请先生成文稿后再创建片段')
+      return
+    }
 
-    if (segments.length === 0) {
-      alert('未找到可用的段落')
+    if (manualSegmentIds.length === 0) {
+      alert('请至少选择一个段落')
       return
     }
 
     dispatch(
       addClip({
-        segmentIds,
+        segmentIds: manualSegmentIds,
         category: newClip.category,
         title: newClip.title,
         description: newClip.description,
-      })
+        startTime: manualStartTime,
+        endTime: manualEndTime,
+      } as any)
     )
 
     setShowAddModal(false)
     setNewClip({ category: 'golden', title: '', description: '' })
+    setManualSegmentIds([])
+    setManualStartTime(0)
+    setManualEndTime(0)
   }
 
   const handlePlayClip = (clip: typeof project.clips[0]) => {
@@ -320,7 +395,7 @@ export default function ClipsPanel() {
 
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-dark-300 border border-gray-700 rounded-lg w-96 p-4 animate-fade-in">
+          <div className="bg-dark-300 border border-gray-700 rounded-lg w-[520px] max-h-[90vh] overflow-y-auto p-4 animate-fade-in">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-white">新建片段</h3>
               <button
@@ -331,78 +406,227 @@ export default function ClipsPanel() {
               </button>
             </div>
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">分类</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {categories.map((cat) => (
-                    <button
-                      key={cat.key}
-                      className={clsx(
-                        'flex items-center gap-2 p-2 rounded-lg border transition-all text-left',
-                        newClip.category === cat.key
-                          ? 'border-primary-500 bg-primary-500/10'
-                          : 'border-gray-700 bg-dark-200 hover:border-gray-600'
-                      )}
-                      onClick={() =>
-                        setNewClip({ ...newClip, category: cat.key as any })
-                      }
-                    >
-                      <cat.icon className={clsx('w-4 h-4', cat.color)} />
-                      <span className="text-xs text-gray-200">{cat.label}</span>
-                    </button>
-                  ))}
+            {!hasTranscript ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <div className="w-16 h-16 rounded-full bg-yellow-400/10 flex items-center justify-center mb-4">
+                  <AlertTriangle className="w-8 h-8 text-yellow-400" />
                 </div>
+                <h4 className="text-sm font-medium text-gray-200 mb-2">当前音频还没有文稿</h4>
+                <p className="text-xs text-gray-500 mb-6 max-w-xs">
+                  请先在导入区点击"生成文稿"按钮，完成后再创建片段。
+                  片段内容需要基于文稿段落生成。
+                </p>
+                <div className="flex items-center gap-2 p-3 bg-dark-100 rounded-lg text-left">
+                  <FileText className="w-4 h-4 text-primary-400 flex-shrink-0" />
+                  <div>
+                    <p className="text-xs text-gray-300">如何生成文稿？</p>
+                    <p className="text-[10px] text-gray-500">
+                      在左侧导入区选择音频文件，点击"生成文稿"按钮
+                    </p>
+                  </div>
+                </div>
+                <button
+                  className="btn btn-secondary mt-6"
+                  onClick={() => setShowAddModal(false)}
+                >
+                  知道了
+                </button>
               </div>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">分类</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {categories.map((cat) => (
+                      <button
+                        key={cat.key}
+                        className={clsx(
+                          'flex items-center gap-2 p-2 rounded-lg border transition-all text-left',
+                          newClip.category === cat.key
+                            ? 'border-primary-500 bg-primary-500/10'
+                            : 'border-gray-700 bg-dark-200 hover:border-gray-600'
+                        )}
+                        onClick={() =>
+                          setNewClip({ ...newClip, category: cat.key as any })
+                        }
+                      >
+                        <cat.icon className={clsx('w-4 h-4', cat.color)} />
+                        <span className="text-xs text-gray-200">{cat.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">标题</label>
-                <input
-                  type="text"
-                  value={newClip.title}
-                  onChange={(e) => setNewClip({ ...newClip, title: e.target.value })}
-                  placeholder="输入片段标题"
-                  className="w-full"
-                />
-              </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">标题</label>
+                  <input
+                    type="text"
+                    value={newClip.title}
+                    onChange={(e) => setNewClip({ ...newClip, title: e.target.value })}
+                    placeholder="输入片段标题"
+                    className="w-full"
+                  />
+                </div>
 
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">描述</label>
-                <textarea
-                  value={newClip.description}
-                  onChange={(e) =>
-                    setNewClip({ ...newClip, description: e.target.value })
-                  }
-                  placeholder="输入片段描述（可选）"
-                  className="w-full resize-none"
-                  rows={3}
-                />
-              </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">描述</label>
+                  <textarea
+                    value={newClip.description}
+                    onChange={(e) =>
+                      setNewClip({ ...newClip, description: e.target.value })
+                    }
+                    placeholder="输入片段描述（可选）"
+                    className="w-full resize-none"
+                    rows={2}
+                  />
+                </div>
 
-              {showAddModal && (
                 <div className="p-3 bg-dark-100 rounded-lg border border-gray-700">
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs text-gray-400">包含段落</label>
-                    <span className="text-[10px] text-gray-500">
-                      {project.selectedSegmentIds.length > 0
-                        ? `已选择 ${project.selectedSegmentIds.length} 段`
-                        : `当前播放位置附近 ${getTargetSegments().length} 段`}
+                  <div className="flex items-center justify-between mb-3">
+                    <label className="text-xs text-gray-400 font-medium">时间范围</label>
+                    <span className="text-[10px] text-primary-400">
+                      时长 {formatTime(manualEndTime - manualStartTime)}
                     </span>
                   </div>
-                  <div className="space-y-1.5 max-h-32 overflow-y-auto">
-                    {getTargetSegments().map((segId) => {
-                      const seg = project.segments.find((s) => s.id === segId)
-                      if (!seg) return null
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] text-gray-500 mb-1">开始时间</label>
+                      <div className="flex items-center gap-1">
+                        <button
+                          className="btn btn-secondary !py-1 !px-1.5"
+                          onClick={() => adjustTime('start', -0.5)}
+                          title="减少 0.5 秒"
+                        >
+                          <ChevronLeft className="w-3 h-3" />
+                        </button>
+                        <input
+                          type="text"
+                          value={formatTime(manualStartTime)}
+                          onChange={(e) => {
+                            const val = e.target.value
+                            const parts = val.split(':')
+                            if (parts.length === 2) {
+                              const seconds =
+                                parseFloat(parts[0]) * 60 + parseFloat(parts[1])
+                              if (!isNaN(seconds)) {
+                                setManualStartTime(seconds)
+                              }
+                            }
+                          }}
+                          className="w-full text-center text-sm py-1 bg-dark-200 border border-gray-600 rounded"
+                        />
+                        <button
+                          className="btn btn-secondary !py-1 !px-1.5"
+                          onClick={() => adjustTime('start', 0.5)}
+                          title="增加 0.5 秒"
+                        >
+                          <ChevronRight className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-gray-500 mb-1">结束时间</label>
+                      <div className="flex items-center gap-1">
+                        <button
+                          className="btn btn-secondary !py-1 !px-1.5"
+                          onClick={() => adjustTime('end', -0.5)}
+                          title="减少 0.5 秒"
+                        >
+                          <ChevronLeft className="w-3 h-3" />
+                        </button>
+                        <input
+                          type="text"
+                          value={formatTime(manualEndTime)}
+                          onChange={(e) => {
+                            const val = e.target.value
+                            const parts = val.split(':')
+                            if (parts.length === 2) {
+                              const seconds =
+                                parseFloat(parts[0]) * 60 + parseFloat(parts[1])
+                              if (!isNaN(seconds)) {
+                                setManualEndTime(seconds)
+                              }
+                            }
+                          }}
+                          className="w-full text-center text-sm py-1 bg-dark-200 border border-gray-600 rounded"
+                        />
+                        <button
+                          className="btn btn-secondary !py-1 !px-1.5"
+                          onClick={() => adjustTime('end', 0.5)}
+                          title="增加 0.5 秒"
+                        >
+                          <ChevronRight className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex gap-1">
+                    <button
+                      className="btn btn-secondary text-[10px] !py-1 !px-2 flex-1"
+                      onClick={() => adjustTime('start', -1)}
+                    >
+                      -1秒
+                    </button>
+                    <button
+                      className="btn btn-secondary text-[10px] !py-1 !px-2 flex-1"
+                      onClick={() => adjustTime('start', 1)}
+                    >
+                      +1秒
+                    </button>
+                    <button
+                      className="btn btn-secondary text-[10px] !py-1 !px-2 flex-1"
+                      onClick={() => adjustTime('end', -1)}
+                    >
+                      尾-1秒
+                    </button>
+                    <button
+                      className="btn btn-secondary text-[10px] !py-1 !px-2 flex-1"
+                      onClick={() => adjustTime('end', 1)}
+                    >
+                      尾+1秒
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-dark-100 rounded-lg border border-gray-700">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs text-gray-400 font-medium">包含段落</label>
+                    <span className="text-[10px] text-gray-500">
+                      已选 {manualSegmentIds.length} 段
+                      {manualSegmentIds.length > 0 && (
+                        <span className="ml-2 text-primary-400">
+                          点击段落可添加/移除
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                    {currentAudioSegments.map((seg) => {
                       const speaker = project.speakers.find(
                         (s) => s.id === seg.speaker
                       )
+                      const isSelected = manualSegmentIds.includes(seg.id)
                       return (
                         <div
-                          key={segId}
-                          className="flex items-start gap-2 p-2 bg-dark-200 rounded"
+                          key={seg.id}
+                          className={clsx(
+                            'flex items-start gap-2 p-2 rounded cursor-pointer transition-all border',
+                            isSelected
+                              ? 'bg-primary-400/10 border-primary-400/30'
+                              : 'bg-dark-200 border-transparent hover:border-gray-600'
+                          )}
+                          onClick={() => toggleSegmentInClip(seg.id)}
                         >
+                          <div className="mt-1.5">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSegmentInClip(seg.id)}
+                              className="w-3.5 h-3.5 rounded border-gray-500 text-primary-400 focus:ring-primary-400"
+                            />
+                          </div>
                           <div
-                            className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0"
+                            className="w-2 h-2 rounded-full mt-2 flex-shrink-0"
                             style={{ backgroundColor: speaker?.color || '#666' }}
                           />
                           <div className="flex-1 min-w-0">
@@ -426,29 +650,59 @@ export default function ClipsPanel() {
                       )
                     })}
                   </div>
-                  <p className="text-[10px] text-gray-500 mt-2">
-                    {project.selectedSegmentIds.length > 0
-                      ? '提示：在文本校对中选择段落可精确指定片段内容'
-                      : '提示：在文本校对中按住 Shift 点击可多选段落'}
-                  </p>
+                  {manualSegmentIds.length > 0 && (
+                    <div className="flex gap-1 mt-2 pt-2 border-t border-gray-700">
+                      <button
+                        className="text-[10px] text-primary-400 hover:text-primary-300"
+                        onClick={() => {
+                          const allIds = currentAudioSegments.map((s) => s.id)
+                          setManualSegmentIds(allIds)
+                          updateTimeRangeFromSegments(allIds)
+                        }}
+                      >
+                        全选
+                      </button>
+                      <span className="text-gray-600">·</span>
+                      <button
+                        className="text-[10px] text-gray-500 hover:text-gray-400"
+                        onClick={() => {
+                          setManualSegmentIds([])
+                        }}
+                      >
+                        清空选择
+                      </button>
+                      <span className="text-gray-600">·</span>
+                      <button
+                        className="text-[10px] text-gray-500 hover:text-gray-400"
+                        onClick={() => {
+                          const targetIds = getTargetSegments()
+                          setManualSegmentIds(targetIds)
+                          updateTimeRangeFromSegments(targetIds)
+                        }}
+                      >
+                        重置为默认
+                      </button>
+                    </div>
+                  )}
                 </div>
-              )}
 
-              <div className="flex gap-2">
-                <button
-                  className="btn btn-secondary flex-1"
-                  onClick={() => setShowAddModal(false)}
-                >
-                  取消
-                </button>
-                <button
-                  className="btn btn-primary flex-1"
-                  onClick={handleAddClip}
-                >
-                  创建
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    className="btn btn-secondary flex-1"
+                    onClick={() => setShowAddModal(false)}
+                  >
+                    取消
+                  </button>
+                  <button
+                    className="btn btn-primary flex-1"
+                    onClick={handleAddClip}
+                    disabled={manualSegmentIds.length === 0}
+                  >
+                    创建
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       )}

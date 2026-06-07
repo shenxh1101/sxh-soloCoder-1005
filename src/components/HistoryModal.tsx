@@ -1,4 +1,5 @@
-import { X, Clock, RotateCcw, Trash2, Save } from 'lucide-react'
+import { useState } from 'react'
+import { X, Clock, RotateCcw, Trash2, Save, ArrowRight, AlertTriangle } from 'lucide-react'
 import { useAppDispatch, useAppSelector } from '@/store'
 import { restoreVersion, deleteVersion } from '@/store/slices/historySlice'
 import { loadProjectState } from '@/store/slices/projectSlice'
@@ -8,32 +9,104 @@ interface HistoryModalProps {
   onClose: () => void
 }
 
+interface DiffPreview {
+  versionId: string
+  versionName: string
+  current: {
+    audioFiles: number
+    segments: number
+    markers: number
+    clips: number
+    speakers: number
+  }
+  target: {
+    audioFiles: number
+    segments: number
+    markers: number
+    clips: number
+    speakers: number
+  }
+}
+
 export default function HistoryModal({ onClose }: HistoryModalProps) {
   const dispatch = useAppDispatch()
   const history = useAppSelector((state) => state.history)
+  const project = useAppSelector((state) => state.project)
+  const [diffPreview, setDiffPreview] = useState<DiffPreview | null>(null)
 
-  const handleRestore = (versionId: string) => {
+  const showDiffPreview = (versionId: string) => {
     const version = history.versions.find((v) => v.id === versionId)
     if (!version) return
 
-    const confirmed = window.confirm(
-      `确定要恢复到版本 "${version.name}" 吗？当前未保存的更改将丢失。`
-    )
-    if (!confirmed) return
+    setDiffPreview({
+      versionId,
+      versionName: version.name,
+      current: {
+        audioFiles: project.audioFiles.length,
+        segments: project.segments.length,
+        markers: project.markers.length,
+        clips: project.clips.length,
+        speakers: project.speakers.length,
+      },
+      target: {
+        audioFiles: version.snapshot.audioFiles.length,
+        segments: version.snapshot.segments.length,
+        markers: version.snapshot.markers.length,
+        clips: version.snapshot.clips.length,
+        speakers: version.snapshot.speakers.length,
+      },
+    })
+  }
 
+  const confirmRestore = () => {
+    if (!diffPreview) return
+
+    const version = history.versions.find((v) => v.id === diffPreview.versionId)
+    if (!version) return
+
+    const snapshot = version.snapshot as any
     dispatch(
       loadProjectState({
-        audioFiles: version.snapshot.audioFiles,
-        segments: version.snapshot.segments,
-        markers: version.snapshot.markers,
-        clips: version.snapshot.clips,
-        speakers: version.snapshot.speakers,
-        currentAudioFileId: version.snapshot.currentAudioFileId,
+        audioFiles: snapshot.audioFiles,
+        segments: snapshot.segments,
+        markers: snapshot.markers,
+        clips: snapshot.clips,
+        speakers: snapshot.speakers,
+        currentAudioFileId: snapshot.currentAudioFileId,
+        selectedSegmentIds: snapshot.selectedSegmentIds || [],
+        filterSpeakerId: snapshot.filterSpeakerId || null,
       })
     )
-    dispatch(restoreVersion(versionId))
-    alert('版本已恢复！')
+    dispatch(restoreVersion(diffPreview.versionId))
+    setDiffPreview(null)
+    alert('版本已恢复！时间轴已自动切换到版本中的当前音频。')
     onClose()
+  }
+
+  const renderDiffItem = (label: string, current: number, target: number) => {
+    const diff = target - current
+    let diffColor = 'text-gray-400'
+    let diffText = '不变'
+
+    if (diff > 0) {
+      diffColor = 'text-green-400'
+      diffText = `+${diff}`
+    } else if (diff < 0) {
+      diffColor = 'text-red-400'
+      diffText = `${diff}`
+    }
+
+    return (
+      <div className="flex items-center justify-between py-2 border-b border-gray-700 last:border-b-0">
+        <span className="text-xs text-gray-400">{label}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-300 w-8 text-right">{current}</span>
+          <ArrowRight className="w-3 h-3 text-gray-600" />
+          <span className="text-xs text-gray-300 w-8">{target}</span>
+          <span className={clsx('text-xs w-12 text-right', diffColor)}>{diffText}</span>
+        </div>
+      </div>
+    )
   }
 
   const handleDelete = (versionId: string) => {
@@ -143,7 +216,7 @@ export default function HistoryModal({ onClose }: HistoryModalProps) {
                       <div className="flex items-center gap-2 mt-3">
                         <button
                           className="btn btn-secondary text-xs py-1 px-3"
-                          onClick={() => handleRestore(version.id)}
+                          onClick={() => showDiffPreview(version.id)}
                         >
                           <RotateCcw className="w-3.5 h-3.5" />
                           恢复此版本
@@ -170,6 +243,65 @@ export default function HistoryModal({ onClose }: HistoryModalProps) {
           </button>
         </div>
       </div>
+
+      {diffPreview && (
+        <div className="absolute inset-0 bg-black/70 flex items-center justify-center z-10">
+          <div className="bg-dark-300 border border-gray-700 rounded-xl w-[480px] p-6 animate-fade-in">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 bg-yellow-400/10 rounded-lg flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-5 h-5 text-yellow-400" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-white">恢复版本预览</h3>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  即将恢复到 "{diffPreview.versionName}"
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-dark-200 rounded-lg p-4 mb-4">
+              <div className="flex items-center justify-between mb-3 pb-2 border-b border-gray-700">
+                <span className="text-xs text-gray-500">项目</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500 w-8 text-right">当前</span>
+                  <ArrowRight className="w-3 h-3 text-gray-600" />
+                  <span className="text-xs text-gray-500 w-8">目标</span>
+                  <span className="text-xs text-gray-500 w-12 text-right">变化</span>
+                </div>
+              </div>
+
+              {renderDiffItem('音频文件', diffPreview.current.audioFiles, diffPreview.target.audioFiles)}
+              {renderDiffItem('文稿段落', diffPreview.current.segments, diffPreview.target.segments)}
+              {renderDiffItem('标记数量', diffPreview.current.markers, diffPreview.target.markers)}
+              {renderDiffItem('片段数量', diffPreview.current.clips, diffPreview.target.clips)}
+              {renderDiffItem('说话人数量', diffPreview.current.speakers, diffPreview.target.speakers)}
+            </div>
+
+            <div className="bg-primary-400/10 border border-primary-400/30 rounded-lg p-3 mb-4">
+              <p className="text-[11px] text-primary-300">
+                💡 恢复后时间轴和文本校对将自动切换到该版本保存时的当前音频，
+                未保存的更改将会丢失。
+              </p>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                className="btn btn-secondary flex-1"
+                onClick={() => setDiffPreview(null)}
+              >
+                取消
+              </button>
+              <button
+                className="btn btn-primary flex-1"
+                onClick={confirmRestore}
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                确认恢复
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

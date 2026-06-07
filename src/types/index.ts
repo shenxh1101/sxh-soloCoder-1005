@@ -80,6 +80,10 @@ export interface ProjectState {
   clips: Clip[]
   speakers: Speaker[]
   currentAudioFileId: string | null
+  searchQuery: string
+  isGeneratingTranscript: boolean
+  selectedSegmentIds: string[]
+  filterSpeakerId: string | null
   playbackState: PlaybackState
 }
 

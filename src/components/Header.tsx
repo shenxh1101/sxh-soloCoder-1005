@@ -36,6 +36,10 @@ export default function Header() {
             clips: project.clips,
             speakers: project.speakers,
             currentAudioFileId: project.currentAudioFileId,
+            selectedSegmentIds: project.selectedSegmentIds,
+            filterSpeakerId: project.filterSpeakerId,
+            searchQuery: project.searchQuery,
+            isGeneratingTranscript: project.isGeneratingTranscript,
             playbackState: {
               isPlaying: false,
               currentTime: 0,
@@ -44,7 +48,7 @@ export default function Header() {
               volume: 0.8,
               isMuted: false,
             },
-          },
+          } as any,
         })
       )
       alert('版本已保存！')
