@@ -53,11 +53,27 @@ export interface Clip {
   collectionId: string | null
 }
 
+export interface CollectionClipSnapshot {
+  clipId: string
+  segmentSnapshots: {
+    segmentId: string
+    text: string
+    speaker: string
+    speakerName: string
+    startTime: number
+    endTime: number
+  }[]
+  startTime: number
+  endTime: number
+  title: string
+}
+
 export interface ClipCollection {
   id: string
   title: string
   description: string
   clipIds: string[]
+  clipSnapshots: CollectionClipSnapshot[]
   createdAt: string
   color: string
 }
@@ -97,6 +113,7 @@ export interface ProjectState {
   selectedSegmentIds: string[]
   filterSpeakerId: string | null
   playbackState: PlaybackState
+  nextSpeakerId: number
 }
 
 export interface Speaker {

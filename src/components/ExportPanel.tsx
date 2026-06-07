@@ -65,7 +65,9 @@ export default function ExportPanel() {
           project.clips,
           project.segments,
           project.collections,
-          exportOptions.clipGroupBy
+          exportOptions.clipGroupBy,
+          project.speakers,
+          project.audioFiles
         )
         title = '片段清单预览'
         break
@@ -109,7 +111,9 @@ export default function ExportPanel() {
           project.clips,
           project.segments,
           project.collections,
-          exportOptions.clipGroupBy
+          exportOptions.clipGroupBy,
+          project.speakers,
+          project.audioFiles
         )
         filename = `${baseName}_片段清单.txt`
         mimeType = 'text/plain'

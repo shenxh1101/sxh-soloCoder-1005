@@ -66,7 +66,10 @@ export default function ClipsPanel() {
   const [newCollectionTitle, setNewCollectionTitle] = useState('')
   const [editingTagsForClip, setEditingTagsForClip] = useState<string | null>(null)
   const [tagInput, setTagInput] = useState('')
-  const [viewMode, setViewMode] = useState<'list' | 'collection'>('list')
+  const [viewMode, setViewMode] = useState<'list' | 'collection' | 'review'>('list')
+  const [reviewGroupBy, setReviewGroupBy] = useState<'category' | 'tag' | 'collection'>('category')
+  const [reviewEditingClip, setReviewEditingClip] = useState<string | null>(null)
+  const [reviewTagInput, setReviewTagInput] = useState('')
 
   const allTags = useMemo(() => {
     const tags = new Set<string>()
@@ -79,10 +82,14 @@ export default function ClipsPanel() {
   const clipsToDisplay = useMemo(() => {
     let clips = project.clips
 
-    if (viewMode === 'collection' && activeCollectionId) {
-      const collection = project.collections.find((c) => c.id === activeCollectionId)
-      if (collection) {
-        clips = clips.filter((c) => collection.clipIds.includes(c.id))
+    if (viewMode === 'collection') {
+      if (activeCollectionId) {
+        const collection = project.collections.find((c) => c.id === activeCollectionId)
+        if (collection) {
+          clips = clips.filter((c) => collection.clipIds.includes(c.id))
+        }
+      } else {
+        clips = clips.filter((c) => !c.collectionId)
       }
     } else if (activeCategory !== 'all') {
       clips = clips.filter((c) => c.category === activeCategory)
@@ -304,6 +311,31 @@ export default function ClipsPanel() {
     dispatch(updateClip({ id: clipId, tags: newTags }))
   }
 
+  const handleReviewChangeCategory = (clipId: string, category: 'golden' | 'to-delete' | 'ad' | 'custom') => {
+    dispatch(updateClip({ id: clipId, category }))
+  }
+
+  const handleReviewAddTag = (clipId: string) => {
+    if (!reviewTagInput.trim()) return
+    const clip = project.clips.find((c) => c.id === clipId)
+    if (!clip) return
+    const newTags = [...new Set([...clip.tags, reviewTagInput.trim()])]
+    dispatch(updateClip({ id: clipId, tags: newTags }))
+    setReviewTagInput('')
+    setReviewEditingClip(null)
+  }
+
+  const handleReviewRemoveTag = (clipId: string, tag: string) => {
+    const clip = project.clips.find((c) => c.id === clipId)
+    if (!clip) return
+    const newTags = clip.tags.filter((t) => t !== tag)
+    dispatch(updateClip({ id: clipId, tags: newTags }))
+  }
+
+  const handleReviewMoveToCollection = (clipId: string, collectionId: string | null) => {
+    dispatch(updateClip({ id: clipId, collectionId }))
+  }
+
   const handlePlayClip = (clip: typeof project.clips[0]) => {
     dispatch(setCurrentTime(clip.startTime))
   }
@@ -360,10 +392,28 @@ export default function ClipsPanel() {
                   ? 'bg-dark-100 text-white'
                   : 'text-gray-400 hover:text-white'
               )}
-              onClick={() => setViewMode('collection')}
+              onClick={() => {
+                setViewMode('collection')
+                setActiveCollectionId(null)
+              }}
             >
               <Layers className="w-3 h-3 inline mr-1" />
               合集
+            </button>
+            <button
+              className={clsx(
+                'px-2 py-1 rounded text-xs transition-colors',
+                viewMode === 'review'
+                  ? 'bg-dark-100 text-white'
+                  : 'text-gray-400 hover:text-white'
+              )}
+              onClick={() => {
+                setViewMode('review')
+                setActiveCollectionId(null)
+              }}
+            >
+              <FileText className="w-3 h-3 inline mr-1" />
+              复核
             </button>
           </div>
           <button
@@ -486,6 +536,341 @@ export default function ClipsPanel() {
                 </button>
               </button>
             ))}
+          </div>
+        </div>
+      )}
+
+      {viewMode === 'review' && (
+        <div className="p-3 border-b border-gray-700">
+          <div className="flex items-center gap-2 mb-3">
+            <button
+              className={clsx(
+                'px-3 py-1.5 rounded-lg text-xs transition-all',
+                reviewGroupBy === 'category'
+                  ? 'bg-primary-500 text-white'
+                  : 'bg-dark-200 text-gray-400 hover:text-white border border-gray-700'
+              )}
+              onClick={() => setReviewGroupBy('category')}
+            >
+              <Star className="w-3 h-3 inline mr-1" />
+              按分类
+            </button>
+            <button
+              className={clsx(
+                'px-3 py-1.5 rounded-lg text-xs transition-all',
+                reviewGroupBy === 'tag'
+                  ? 'bg-primary-500 text-white'
+                  : 'bg-dark-200 text-gray-400 hover:text-white border border-gray-700'
+              )}
+              onClick={() => setReviewGroupBy('tag')}
+            >
+              <Tag className="w-3 h-3 inline mr-1" />
+              按标签
+            </button>
+            <button
+              className={clsx(
+                'px-3 py-1.5 rounded-lg text-xs transition-all',
+                reviewGroupBy === 'collection'
+                  ? 'bg-primary-500 text-white'
+                  : 'bg-dark-200 text-gray-400 hover:text-white border border-gray-700'
+              )}
+              onClick={() => setReviewGroupBy('collection')}
+            >
+              <Layers className="w-3 h-3 inline mr-1" />
+              按合集
+            </button>
+          </div>
+
+          <div className="space-y-4 max-h-[500px] overflow-y-auto">
+            {(() => {
+              let groups: { key: string; label: string; clips: typeof project.clips }[] = []
+
+              if (reviewGroupBy === 'category') {
+                groups = categories.map((cat) => ({
+                  key: cat.key,
+                  label: cat.label,
+                  clips: project.clips.filter((c) => c.category === cat.key),
+                })).filter((g) => g.clips.length > 0)
+
+                const uncategorized = project.clips.filter((c) =>
+                  !categories.some((cat) => cat.key === c.category)
+                )
+                if (uncategorized.length > 0) {
+                  groups.push({ key: 'uncategorized', label: '未分类', clips: uncategorized })
+                }
+              } else if (reviewGroupBy === 'tag') {
+                const tagMap = new Map<string, typeof project.clips>()
+                project.clips.forEach((clip) => {
+                  if (clip.tags.length === 0) {
+                    const key = '__no_tag__'
+                    if (!tagMap.has(key)) tagMap.set(key, [])
+                    tagMap.get(key)!.push(clip)
+                  } else {
+                    clip.tags.forEach((tag) => {
+                      if (!tagMap.has(tag)) tagMap.set(tag, [])
+                      tagMap.get(tag)!.push(clip)
+                    })
+                  }
+                })
+                groups = Array.from(tagMap.entries()).map(([key, clips]) => ({
+                  key,
+                  label: key === '__no_tag__' ? '无标签' : key,
+                  clips,
+                }))
+              } else if (reviewGroupBy === 'collection') {
+                groups = project.collections.map((col) => ({
+                  key: col.id,
+                  label: col.title,
+                  clips: project.clips.filter((c) => col.clipIds.includes(c.id)),
+                })).filter((g) => g.clips.length > 0)
+
+                const noCollection = project.clips.filter((c) => !c.collectionId)
+                if (noCollection.length > 0) {
+                  groups.unshift({ key: '__no_collection__', label: '未加入合集', clips: noCollection })
+                }
+              }
+
+              return groups.map((group) => (
+                <div key={group.key} className="space-y-2">
+                  <div className="flex items-center gap-2 px-1">
+                    <h4 className="text-xs font-medium text-gray-300">{group.label}</h4>
+                    <span className="text-[10px] text-gray-500 bg-dark-200 px-1.5 py-0.5 rounded">
+                      {group.clips.length} 个
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {group.clips.map((clip) => {
+                      const catInfo = categories.find((c) => c.key === clip.category)
+                      const clipSegments = project.segments.filter((s) =>
+                        clip.segmentIds.includes(s.id)
+                      )
+                      const clipText = clipSegments
+                        .map((s) => s.text)
+                        .join(' ')
+                        .slice(0, 150)
+                      const audioFile = project.audioFiles.find((f) => f.id === clip.audioFileId)
+                      const speakers = clipSegments
+                        .map((s) => project.speakers.find((sp) => sp.id === s.speaker)?.name)
+                        .filter(Boolean)
+                      const uniqueSpeakers = [...new Set(speakers)]
+                      const isEditingTag = reviewEditingClip === clip.id
+                      const currentCollection = clip.collectionId
+                        ? project.collections.find((c) => c.id === clip.collectionId)
+                        : null
+
+                      return (
+                        <div
+                          key={clip.id}
+                          className={clsx(
+                            'p-3 rounded-lg border transition-all group',
+                            catInfo?.bgColor || 'bg-dark-200',
+                            'border-gray-700 hover:border-gray-600'
+                          )}
+                        >
+                          <div className="flex items-start gap-2">
+                            <div
+                              className={clsx(
+                                'w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0',
+                                catInfo?.bgColor || 'bg-dark-100'
+                              )}
+                            >
+                              {catInfo && <catInfo.icon className={clsx('w-4 h-4', catInfo.color)} />}
+                            </div>
+
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between gap-2">
+                                <h4 className="font-medium text-sm text-gray-200 truncate">
+                                  {clip.title}
+                                </h4>
+                                <div className="flex items-center gap-1 flex-shrink-0">
+                                  <div className="relative group/category">
+                                    <button
+                                      className="btn btn-secondary text-[10px] !py-1 !px-2 flex items-center gap-1"
+                                      title="改分类"
+                                    >
+                                      {catInfo && <catInfo.icon className={clsx('w-3 h-3', catInfo.color)} />}
+                                      {catInfo?.label || '分类'}
+                                    </button>
+                                    <div className="absolute right-0 top-full mt-1 bg-dark-300 border border-gray-700 rounded-lg p-1 shadow-lg z-10 hidden group-hover/category:block">
+                                      {categories.map((cat) => (
+                                        <button
+                                          key={cat.key}
+                                          className={clsx(
+                                            'w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left hover:bg-dark-200',
+                                            clip.category === cat.key && 'bg-primary-500/20'
+                                          )}
+                                          onClick={() => handleReviewChangeCategory(clip.id, cat.key as any)}
+                                        >
+                                          <cat.icon className={clsx('w-3 h-3', cat.color)} />
+                                          {cat.label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+
+                                  <div className="relative group/tags">
+                                    <button
+                                      className="btn btn-secondary text-[10px] !py-1 !px-2 flex items-center gap-1"
+                                      title="加标签"
+                                      onClick={() => {
+                                        setReviewEditingClip(isEditingTag ? null : clip.id)
+                                        setReviewTagInput('')
+                                      }}
+                                    >
+                                      <Tag className="w-3 h-3" />
+                                      {clip.tags.length > 0 ? clip.tags.length : '标签'}
+                                    </button>
+                                    <div className="absolute right-0 top-full mt-1 bg-dark-300 border border-gray-700 rounded-lg p-2 shadow-lg z-10 hidden group-hover/tags:block w-48">
+                                      {clip.tags.length > 0 && (
+                                        <div className="flex flex-wrap gap-1 mb-2">
+                                          {clip.tags.map((tag) => (
+                                            <span
+                                              key={tag}
+                                              className="flex items-center gap-1 px-1.5 py-0.5 bg-primary-500/20 text-primary-300 text-[9px] rounded"
+                                            >
+                                              {tag}
+                                              <button
+                                                className="hover:text-red-400"
+                                                onClick={() => handleReviewRemoveTag(clip.id, tag)}
+                                              >
+                                                ×
+                                              </button>
+                                            </span>
+                                          ))}
+                                        </div>
+                                      )}
+                                      <div className="flex gap-1">
+                                        <input
+                                          type="text"
+                                          value={isEditingTag ? reviewTagInput : ''}
+                                          onChange={(e) => setReviewTagInput(e.target.value)}
+                                          placeholder="输入标签"
+                                          className="flex-1 text-xs py-1"
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                              e.preventDefault()
+                                              handleReviewAddTag(clip.id)
+                                            }
+                                          }}
+                                          onFocus={() => setReviewEditingClip(clip.id)}
+                                        />
+                                        <button
+                                          className="btn btn-primary text-[10px] !py-1 !px-2"
+                                          onClick={() => handleReviewAddTag(clip.id)}
+                                        >
+                                          添加
+                                        </button>
+                                      </div>
+                                      {allTags.length > 0 && (
+                                        <div className="flex gap-1 flex-wrap mt-2">
+                                          <span className="text-[9px] text-gray-500">常用：</span>
+                                          {allTags.slice(0, 6).filter(t => !clip.tags.includes(t)).map((tag) => (
+                                            <button
+                                              key={tag}
+                                              className="px-1.5 py-0.5 bg-dark-200 rounded text-[9px] text-gray-400 hover:text-white"
+                                              onClick={() => {
+                                                const newTags = [...new Set([...clip.tags, tag])]
+                                                dispatch(updateClip({ id: clip.id, tags: newTags }))
+                                              }}
+                                            >
+                                              + {tag}
+                                            </button>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="relative group/collection">
+                                    <button
+                                      className="btn btn-secondary text-[10px] !py-1 !px-2 flex items-center gap-1"
+                                      title="移入/移出合集"
+                                    >
+                                      <Layers className="w-3 h-3" />
+                                      {currentCollection ? currentCollection.title : '合集'}
+                                    </button>
+                                    <div className="absolute right-0 top-full mt-1 bg-dark-300 border border-gray-700 rounded-lg p-1 shadow-lg z-10 hidden group-hover/collection:block w-36">
+                                      <button
+                                        className={clsx(
+                                          'w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left hover:bg-dark-200',
+                                          !clip.collectionId && 'bg-primary-500/20'
+                                        )}
+                                        onClick={() => handleReviewMoveToCollection(clip.id, null)}
+                                      >
+                                        <X className="w-3 h-3" />
+                                        移出合集
+                                      </button>
+                                      {project.collections.map((col) => (
+                                        <button
+                                          key={col.id}
+                                          className={clsx(
+                                            'w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left hover:bg-dark-200',
+                                            clip.collectionId === col.id && 'bg-primary-500/20'
+                                          )}
+                                          onClick={() => handleReviewMoveToCollection(clip.id, col.id)}
+                                        >
+                                          <div
+                                            className="w-2 h-2 rounded-full"
+                                            style={{ backgroundColor: col.color }}
+                                          />
+                                          {col.title}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-3 mt-1 text-[10px] text-gray-500">
+                                <span className="flex items-center gap-1">
+                                  <Clock className="w-3 h-3" />
+                                  {formatTime(clip.startTime)} - {formatTime(clip.endTime)}
+                                </span>
+                                {audioFile && (
+                                  <span className="truncate max-w-[120px]" title={audioFile.name}>
+                                    {audioFile.name}
+                                  </span>
+                                )}
+                                {uniqueSpeakers.length > 0 && (
+                                  <span className="flex items-center gap-1">
+                                    <Megaphone className="w-3 h-3" />
+                                    {uniqueSpeakers.join('、')}
+                                  </span>
+                                )}
+                              </div>
+
+                              <p className="text-xs text-gray-400 mt-2 line-clamp-3 leading-relaxed">
+                                {clipText}...
+                              </p>
+
+                              {clip.tags.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-2">
+                                  {clip.tags.map((tag) => (
+                                    <span
+                                      key={tag}
+                                      className="px-1.5 py-0.5 bg-primary-500/20 text-primary-300 text-[9px] rounded"
+                                    >
+                                      {tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))
+            })()}
+
+            {project.clips.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-8 text-gray-500">
+                <FolderOpen className="w-10 h-10 mb-2 opacity-50" />
+                <p className="text-sm">暂无片段</p>
+              </div>
+            )}
           </div>
         </div>
       )}

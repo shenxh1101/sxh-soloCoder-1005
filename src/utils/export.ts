@@ -1,5 +1,215 @@
-import type { TranscriptSegment, Clip, ExportOptions, Marker, ClipCollection } from '@/types'
+import type { TranscriptSegment, Clip, ExportOptions, Marker, ClipCollection, Speaker, AudioFile } from '@/types'
 import { formatTime, formatSRTTime, formatVTTTime } from './time'
+
+export interface ClipValidationIssue {
+  type: 'missing-segment' | 'invalid-time' | 'deleted-segment'
+  message: string
+  severity: 'warning' | 'error'
+}
+
+export interface ClipWithValidation extends Clip {
+  validationIssues: ClipValidationIssue[]
+  segmentTexts: string[]
+  speakerNames: string[]
+  audioFileName: string
+}
+
+export interface ClipGroup {
+  key: string
+  label: string
+  clips: ClipWithValidation[]
+  totalDuration: number
+  count: number
+}
+
+export function validateClip(
+  clip: Clip,
+  segments: TranscriptSegment[],
+  audioFiles: AudioFile[]
+): ClipValidationIssue[] {
+  const issues: ClipValidationIssue[] = []
+
+  const clipSegments = segments.filter((s) => clip.segmentIds.includes(s.id))
+  const missingSegments = clip.segmentIds.filter(
+    (id) => !segments.some((s) => s.id === id)
+  )
+
+  if (missingSegments.length > 0) {
+    issues.push({
+      type: 'missing-segment',
+      message: `引用的 ${missingSegments.length} 个段落不存在`,
+      severity: 'error',
+    })
+  }
+
+  const deletedSegments = clipSegments.filter((s) => s.isDeleted)
+  if (deletedSegments.length > 0) {
+    issues.push({
+      type: 'deleted-segment',
+      message: `包含 ${deletedSegments.length} 个已标记删除的段落`,
+      severity: 'warning',
+    })
+  }
+
+  if (clip.endTime <= clip.startTime) {
+    issues.push({
+      type: 'invalid-time',
+      message: `结束时间必须大于开始时间`,
+      severity: 'error',
+    })
+  }
+
+  if (clip.startTime < 0) {
+    issues.push({
+      type: 'invalid-time',
+      message: `开始时间不能为负数`,
+      severity: 'error',
+    })
+  }
+
+  if (clipSegments.length > 0) {
+    const minSegmentTime = Math.min(...clipSegments.map((s) => s.startTime))
+    const maxSegmentTime = Math.max(...clipSegments.map((s) => s.endTime))
+
+    if (clip.startTime > minSegmentTime + 0.1) {
+      issues.push({
+        type: 'invalid-time',
+        message: `开始时间早于最早段落的开始时间`,
+        severity: 'warning',
+      })
+    }
+
+    if (clip.endTime < maxSegmentTime - 0.1) {
+      issues.push({
+        type: 'invalid-time',
+        message: `结束时间晚于最晚段落的结束时间`,
+        severity: 'warning',
+      })
+    }
+  }
+
+  const audioFile = audioFiles.find((f) => f.id === clip.audioFileId)
+  if (audioFile && clip.endTime > audioFile.duration) {
+    issues.push({
+      type: 'invalid-time',
+      message: `结束时间超出音频时长`,
+      severity: 'error',
+    })
+  }
+
+  return issues
+}
+
+export function getClipWithValidation(
+  clip: Clip,
+  segments: TranscriptSegment[],
+  speakers: Speaker[],
+  audioFiles: AudioFile[]
+): ClipWithValidation {
+  const clipSegments = segments.filter((s) => clip.segmentIds.includes(s.id))
+  const speakerMap = new Map(speakers.map((s) => [s.id, s.name]))
+  const audioFile = audioFiles.find((f) => f.id === clip.audioFileId)
+
+  return {
+    ...clip,
+    validationIssues: validateClip(clip, segments, audioFiles),
+    segmentTexts: clipSegments.map((s) => s.text),
+    speakerNames: clipSegments.map((s) => speakerMap.get(s.speaker) || s.speaker),
+    audioFileName: audioFile?.name || '未知音频',
+  }
+}
+
+export function groupClips(
+  clips: Clip[],
+  segments: TranscriptSegment[],
+  speakers: Speaker[],
+  audioFiles: AudioFile[],
+  collections: ClipCollection[],
+  groupBy: 'category' | 'tag' | 'collection'
+): ClipGroup[] {
+  const clipsWithValidation = clips.map((c) =>
+    getClipWithValidation(c, segments, speakers, audioFiles)
+  )
+
+  const groups: ClipGroup[] = []
+
+  if (groupBy === 'category') {
+    const categories = [
+      { key: 'golden', label: '金句收藏' },
+      { key: 'to-delete', label: '待删片段' },
+      { key: 'ad', label: '广告口播' },
+      { key: 'custom', label: '自定义' },
+    ]
+
+    categories.forEach((cat) => {
+      const groupClips = clipsWithValidation.filter((c) => c.category === cat.key)
+      if (groupClips.length > 0) {
+        groups.push({
+          key: cat.key,
+          label: cat.label,
+          clips: groupClips,
+          count: groupClips.length,
+          totalDuration: groupClips.reduce((sum, c) => sum + (c.endTime - c.startTime), 0),
+        })
+      }
+    })
+  } else if (groupBy === 'tag') {
+    const allTags = new Set<string>()
+    clips.forEach((c) => c.tags.forEach((t) => allTags.add(t)))
+    const tagsArray = Array.from(allTags).sort()
+    const untaggedClips = clipsWithValidation.filter((c) => c.tags.length === 0)
+
+    tagsArray.forEach((tag) => {
+      const groupClips = clipsWithValidation.filter((c) => c.tags.includes(tag))
+      if (groupClips.length > 0) {
+        groups.push({
+          key: tag,
+          label: tag,
+          clips: groupClips,
+          count: groupClips.length,
+          totalDuration: groupClips.reduce((sum, c) => sum + (c.endTime - c.startTime), 0),
+        })
+      }
+    })
+
+    if (untaggedClips.length > 0) {
+      groups.push({
+        key: 'untagged',
+        label: '无标签',
+        clips: untaggedClips,
+        count: untaggedClips.length,
+        totalDuration: untaggedClips.reduce((sum, c) => sum + (c.endTime - c.startTime), 0),
+      })
+    }
+  } else if (groupBy === 'collection') {
+    const clipsWithoutCollection = clipsWithValidation.filter((c) => !c.collectionId)
+
+    collections.forEach((col) => {
+      const groupClips = clipsWithValidation.filter((c) => c.collectionId === col.id)
+      if (groupClips.length > 0) {
+        groups.push({
+          key: col.id,
+          label: col.title,
+          clips: groupClips,
+          count: groupClips.length,
+          totalDuration: groupClips.reduce((sum, c) => sum + (c.endTime - c.startTime), 0),
+        })
+      }
+    })
+
+    if (clipsWithoutCollection.length > 0) {
+      groups.push({
+        key: 'uncollected',
+        label: '未分类',
+        clips: clipsWithoutCollection,
+        count: clipsWithoutCollection.length,
+        totalDuration: clipsWithoutCollection.reduce((sum, c) => sum + (c.endTime - c.startTime), 0),
+      })
+    }
+  }
+
+  return groups
+}
 
 export function generateTranscript(
   segments: TranscriptSegment[],
@@ -103,7 +313,9 @@ export function generateClipList(
   clips: Clip[],
   segments: TranscriptSegment[],
   collections: ClipCollection[],
-  groupBy: 'category' | 'tag' | 'collection' = 'category'
+  groupBy: 'category' | 'tag' | 'collection' = 'category',
+  speakers?: Speaker[],
+  audioFiles?: AudioFile[]
 ): string {
   let list = ''
 
@@ -113,18 +325,42 @@ export function generateClipList(
     collection: '合集',
   }
 
+  const clipsWithValidation = speakers && audioFiles
+    ? clips.map((c) => getClipWithValidation(c, segments, speakers, audioFiles))
+    : clips.map((c) => ({ ...c, validationIssues: [] as ClipValidationIssue[] }))
+
   list += '='.repeat(60) + '\n'
   list += '片段清单\n'
   list += `生成时间: ${new Date().toLocaleString('zh-CN')}\n`
   list += `分组方式: 按${groupLabels[groupBy]}\n`
+
+  const totalClips = clips.length
+  const totalDuration = clips.reduce((sum, c) => sum + (c.endTime - c.startTime), 0)
+  const clipsWithErrors = clipsWithValidation.filter(
+    (c) => c.validationIssues?.some((i) => i.severity === 'error')
+  ).length
+  const clipsWithWarnings = clipsWithValidation.filter(
+    (c) => c.validationIssues?.some((i) => i.severity === 'warning')
+  ).length
+
+  list += `总片段数: ${totalClips} | 总时长: ${formatTime(totalDuration)}\n`
+  if (clipsWithErrors > 0 || clipsWithWarnings > 0) {
+    list += `异常提示: ${clipsWithErrors} 个错误, ${clipsWithWarnings} 个警告\n`
+  }
   list += '='.repeat(60) + '\n\n'
 
-  const formatClipEntry = (clip: Clip, index: number) => {
+  const formatClipEntry = (clip: Clip & { validationIssues?: ClipValidationIssue[] }, index: number) => {
     const clipSegments = segments.filter((s) => clip.segmentIds.includes(s.id))
     const clipText = clipSegments.map((s) => s.text).join(' ')
 
     let entry = ''
-    entry += `${index + 1}. ${clip.title}\n`
+    const issues = clip.validationIssues || []
+    const hasError = issues.some((i) => i.severity === 'error')
+    const hasWarning = issues.some((i) => i.severity === 'warning')
+
+    const statusPrefix = hasError ? '❌ ' : hasWarning ? '⚠️  ' : ''
+
+    entry += `${index + 1}. ${statusPrefix}${clip.title}\n`
     entry += `   时间: ${formatTime(clip.startTime)} - ${formatTime(clip.endTime)} `
     entry += `(时长: ${formatTime(clip.endTime - clip.startTime)})\n`
     if (clip.description) {
@@ -133,6 +369,11 @@ export function generateClipList(
     if (clip.tags.length > 0) {
       entry += `   标签: ${clip.tags.join(', ')}\n`
     }
+
+    if (issues.length > 0) {
+      entry += `   异常: ${issues.map((i) => `[${i.severity === 'error' ? '错误' : '警告'}] ${i.message}`).join('; ')}\n`
+    }
+
     entry += `   内容: ${clipText.slice(0, 100)}${clipText.length > 100 ? '...' : ''}\n\n`
     return entry
   }
@@ -146,10 +387,11 @@ export function generateClipList(
     ]
 
     categories.forEach((category) => {
-      const categoryClips = clips.filter((c) => c.category === category.key)
+      const categoryClips = clipsWithValidation.filter((c) => c.category === category.key)
       if (categoryClips.length === 0) return
 
-      list += `## ${category.label} (${categoryClips.length})\n\n`
+      const groupDuration = categoryClips.reduce((sum, c) => sum + (c.endTime - c.startTime), 0)
+      list += `## ${category.label} (${categoryClips.length}个, 总时长: ${formatTime(groupDuration)})\n\n`
 
       categoryClips.forEach((clip, index) => {
         list += formatClipEntry(clip, index)
@@ -159,13 +401,14 @@ export function generateClipList(
     const allTags = new Set<string>()
     clips.forEach((c) => c.tags.forEach((t) => allTags.add(t)))
     const tagsArray = Array.from(allTags).sort()
-    const untaggedClips = clips.filter((c) => c.tags.length === 0)
+    const untaggedClips = clipsWithValidation.filter((c) => c.tags.length === 0)
 
     tagsArray.forEach((tag) => {
-      const tagClips = clips.filter((c) => c.tags.includes(tag))
+      const tagClips = clipsWithValidation.filter((c) => c.tags.includes(tag))
       if (tagClips.length === 0) return
 
-      list += `## ${tag} (${tagClips.length})\n\n`
+      const groupDuration = tagClips.reduce((sum, c) => sum + (c.endTime - c.startTime), 0)
+      list += `## ${tag} (${tagClips.length}个, 总时长: ${formatTime(groupDuration)})\n\n`
 
       tagClips.forEach((clip, index) => {
         list += formatClipEntry(clip, index)
@@ -173,20 +416,22 @@ export function generateClipList(
     })
 
     if (untaggedClips.length > 0) {
-      list += `## 无标签 (${untaggedClips.length})\n\n`
+      const groupDuration = untaggedClips.reduce((sum, c) => sum + (c.endTime - c.startTime), 0)
+      list += `## 无标签 (${untaggedClips.length}个, 总时长: ${formatTime(groupDuration)})\n\n`
 
       untaggedClips.forEach((clip, index) => {
         list += formatClipEntry(clip, index)
       })
     }
   } else if (groupBy === 'collection') {
-    const clipsWithoutCollection = clips.filter((c) => !c.collectionId)
+    const clipsWithoutCollection = clipsWithValidation.filter((c) => !c.collectionId)
 
     collections.forEach((collection) => {
-      const collectionClips = clips.filter((c) => c.collectionId === collection.id)
+      const collectionClips = clipsWithValidation.filter((c) => c.collectionId === collection.id)
       if (collectionClips.length === 0) return
 
-      list += `## ${collection.title} (${collectionClips.length})\n\n`
+      const groupDuration = collectionClips.reduce((sum, c) => sum + (c.endTime - c.startTime), 0)
+      list += `## ${collection.title} (${collectionClips.length}个, 总时长: ${formatTime(groupDuration)})\n\n`
 
       collectionClips.forEach((clip, index) => {
         list += formatClipEntry(clip, index)
@@ -194,7 +439,8 @@ export function generateClipList(
     })
 
     if (clipsWithoutCollection.length > 0) {
-      list += `## 未分类 (${clipsWithoutCollection.length})\n\n`
+      const groupDuration = clipsWithoutCollection.reduce((sum, c) => sum + (c.endTime - c.startTime), 0)
+      list += `## 未分类 (${clipsWithoutCollection.length}个, 总时长: ${formatTime(groupDuration)})\n\n`
 
       clipsWithoutCollection.forEach((clip, index) => {
         list += formatClipEntry(clip, index)

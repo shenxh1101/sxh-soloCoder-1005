@@ -149,7 +149,7 @@ export default function TextPanel() {
   const handleAddAndSwitchSpeaker = (name: string, segmentId: string) => {
     if (!name.trim()) return
     
-    const newSpeakerId = `spk_${project.speakers.length}`
+    const newSpeakerId = `spk_${project.nextSpeakerId}`
     
     dispatch(addSpeaker({ name: name.trim() }))
     dispatch(updateSegmentSpeaker({ id: segmentId, speaker: newSpeakerId }))

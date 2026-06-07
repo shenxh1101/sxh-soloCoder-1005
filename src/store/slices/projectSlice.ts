@@ -15,6 +15,7 @@ interface ProjectState {
   isGeneratingTranscript: boolean
   selectedSegmentIds: string[]
   filterSpeakerId: string | null
+  nextSpeakerId: number
 }
 
 const initialState: ProjectState = {
@@ -33,6 +34,7 @@ const initialState: ProjectState = {
   isGeneratingTranscript: false,
   selectedSegmentIds: [],
   filterSpeakerId: null,
+  nextSpeakerId: 3,
 }
 
 const projectSlice = createSlice({
@@ -338,19 +340,66 @@ const projectSlice = createSlice({
       }>
     ) => {
       const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
+      const speakerMap = new Map(state.speakers.map((s) => [s.id, s.name]))
+
+      const clipIds = action.payload.clipIds || []
+      const clipSnapshots = clipIds.map((clipId) => {
+        const clip = state.clips.find((c) => c.id === clipId)
+        if (!clip) {
+          return {
+            clipId,
+            segmentSnapshots: [],
+            startTime: 0,
+            endTime: 0,
+            title: '',
+          }
+        }
+
+        const segmentSnapshots = clip.segmentIds.map((segId) => {
+          const segment = state.segments.find((s) => s.id === segId)
+          if (!segment) {
+            return {
+              segmentId: segId,
+              text: '',
+              speaker: '',
+              speakerName: '未知',
+              startTime: 0,
+              endTime: 0,
+            }
+          }
+          return {
+            segmentId: segId,
+            text: segment.text,
+            speaker: segment.speaker,
+            speakerName: speakerMap.get(segment.speaker) || segment.speaker,
+            startTime: segment.startTime,
+            endTime: segment.endTime,
+          }
+        })
+
+        return {
+          clipId,
+          segmentSnapshots,
+          startTime: clip.startTime,
+          endTime: clip.endTime,
+          title: clip.title,
+        }
+      })
+
       const collection: ClipCollection = {
         id: uuidv4(),
         title: action.payload.title,
         description: action.payload.description || '',
-        clipIds: action.payload.clipIds || [],
+        clipIds,
+        clipSnapshots,
         createdAt: new Date().toISOString(),
         color: colors[state.collections.length % colors.length],
       }
       state.collections.push(collection)
 
-      if (action.payload.clipIds) {
+      if (clipIds.length > 0) {
         state.clips.forEach((clip) => {
-          if (action.payload.clipIds!.includes(clip.id)) {
+          if (clipIds.includes(clip.id)) {
             clip.collectionId = collection.id
           }
         })
@@ -409,11 +458,13 @@ const projectSlice = createSlice({
 
     addSpeaker: (state, action: PayloadAction<{ name: string }>) => {
       const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
+      const newSpeakerId = state.nextSpeakerId
       state.speakers.push({
-        id: `spk_${state.speakers.length}`,
+        id: `spk_${newSpeakerId}`,
         name: action.payload.name,
-        color: colors[state.speakers.length % colors.length],
+        color: colors[newSpeakerId % colors.length],
       })
+      state.nextSpeakerId = newSpeakerId + 1
     },
 
     mergeSpeakers: (
@@ -464,6 +515,7 @@ const projectSlice = createSlice({
         currentAudioFileId?: string | null
         selectedSegmentIds?: string[]
         filterSpeakerId?: string | null
+        nextSpeakerId?: number
       }>
     ) => {
       state.audioFiles = action.payload.audioFiles
@@ -480,6 +532,18 @@ const projectSlice = createSlice({
       }
       if (action.payload.filterSpeakerId !== undefined) {
         state.filterSpeakerId = action.payload.filterSpeakerId
+      }
+      if (action.payload.nextSpeakerId !== undefined) {
+        state.nextSpeakerId = action.payload.nextSpeakerId
+      } else {
+        const maxId = action.payload.speakers.reduce((max, s) => {
+          const match = s.id.match(/spk_(\d+)/)
+          if (match) {
+            return Math.max(max, parseInt(match[1]) + 1)
+          }
+          return max
+        }, 0)
+        state.nextSpeakerId = Math.max(maxId, state.speakers.length)
       }
     },
   },
