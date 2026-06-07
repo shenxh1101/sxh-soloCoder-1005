@@ -26,6 +26,7 @@ const categories = [
 export default function ClipsPanel() {
   const dispatch = useAppDispatch()
   const project = useAppSelector((state) => state.project)
+  const playback = useAppSelector((state) => state.playback)
   const [activeCategory, setActiveCategory] = useState<string>('all')
   const [editingClip, setEditingClip] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
@@ -42,20 +43,57 @@ export default function ClipsPanel() {
       ? project.clips
       : project.clips.filter((c) => c.category === activeCategory)
 
+  const getTargetSegments = () => {
+    if (project.selectedSegmentIds.length > 0) {
+      return project.selectedSegmentIds
+    }
+
+    const currentAudioSegments = project.segments
+      .filter((s) => s.audioFileId === project.currentAudioFileId)
+      .sort((a, b) => a.startTime - b.startTime)
+
+    const currentTime = playback.currentTime
+    let nearestSegment = currentAudioSegments.find(
+      (s) => currentTime >= s.startTime && currentTime < s.endTime
+    )
+
+    if (!nearestSegment) {
+      nearestSegment = currentAudioSegments.reduce((prev, curr) =>
+        Math.abs(curr.startTime - currentTime) < Math.abs(prev.startTime - currentTime)
+          ? curr
+          : prev
+      )
+    }
+
+    const nearestIndex = currentAudioSegments.findIndex((s) => s.id === nearestSegment.id)
+    const startIndex = Math.max(0, nearestIndex - 1)
+    const endIndex = Math.min(currentAudioSegments.length, nearestIndex + 2)
+
+    return currentAudioSegments.slice(startIndex, endIndex).map((s) => s.id)
+  }
+
   const handleAddClip = () => {
     if (!newClip.title.trim()) {
       alert('请输入片段标题')
       return
     }
 
-    const selectedSegments = project.segments
-      .filter((s) => s.audioFileId === project.currentAudioFileId)
-      .slice(0, 3)
-      .map((s) => s.id)
+    if (!project.currentAudioFileId) {
+      alert('请先选择一个音频文件')
+      return
+    }
+
+    const segmentIds = getTargetSegments()
+    const segments = project.segments.filter((s) => segmentIds.includes(s.id))
+
+    if (segments.length === 0) {
+      alert('未找到可用的段落')
+      return
+    }
 
     dispatch(
       addClip({
-        segmentIds: selectedSegments,
+        segmentIds,
         category: newClip.category,
         title: newClip.title,
         description: newClip.description,
@@ -340,6 +378,61 @@ export default function ClipsPanel() {
                   rows={3}
                 />
               </div>
+
+              {showAddModal && (
+                <div className="p-3 bg-dark-100 rounded-lg border border-gray-700">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs text-gray-400">包含段落</label>
+                    <span className="text-[10px] text-gray-500">
+                      {project.selectedSegmentIds.length > 0
+                        ? `已选择 ${project.selectedSegmentIds.length} 段`
+                        : `当前播放位置附近 ${getTargetSegments().length} 段`}
+                    </span>
+                  </div>
+                  <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                    {getTargetSegments().map((segId) => {
+                      const seg = project.segments.find((s) => s.id === segId)
+                      if (!seg) return null
+                      const speaker = project.speakers.find(
+                        (s) => s.id === seg.speaker
+                      )
+                      return (
+                        <div
+                          key={segId}
+                          className="flex items-start gap-2 p-2 bg-dark-200 rounded"
+                        >
+                          <div
+                            className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0"
+                            style={{ backgroundColor: speaker?.color || '#666' }}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="text-[10px] font-medium"
+                                style={{ color: speaker?.color }}
+                              >
+                                {speaker?.name || '未知'}
+                              </span>
+                              <span className="text-[10px] text-gray-500">
+                                {formatTime(seg.startTime)} -{' '}
+                                {formatTime(seg.endTime)}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-gray-400 line-clamp-1 mt-0.5">
+                              {seg.text}
+                            </p>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  <p className="text-[10px] text-gray-500 mt-2">
+                    {project.selectedSegmentIds.length > 0
+                      ? '提示：在文本校对中选择段落可精确指定片段内容'
+                      : '提示：在文本校对中按住 Shift 点击可多选段落'}
+                  </p>
+                </div>
+              )}
 
               <div className="flex gap-2">
                 <button

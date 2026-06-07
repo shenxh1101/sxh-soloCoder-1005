@@ -28,6 +28,7 @@ export default function HistoryModal({ onClose }: HistoryModalProps) {
         markers: version.snapshot.markers,
         clips: version.snapshot.clips,
         speakers: version.snapshot.speakers,
+        currentAudioFileId: version.snapshot.currentAudioFileId,
       })
     )
     dispatch(restoreVersion(versionId))

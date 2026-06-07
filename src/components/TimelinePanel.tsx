@@ -250,8 +250,9 @@ export default function TimelinePanel() {
               <button
                 className="text-gray-400 hover:text-white"
                 onClick={() => {
+                  const newMutedState = !playback.isMuted
                   dispatch(toggleMute())
-                  wavesurferRef.current?.setMuted(playback.isMuted)
+                  wavesurferRef.current?.setMuted(newMutedState)
                 }}
               >
                 {playback.isMuted || playback.volume === 0 ? (

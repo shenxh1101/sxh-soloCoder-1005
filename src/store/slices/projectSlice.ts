@@ -12,6 +12,7 @@ interface ProjectState {
   currentAudioFileId: string | null
   searchQuery: string
   isGeneratingTranscript: boolean
+  selectedSegmentIds: string[]
 }
 
 const initialState: ProjectState = {
@@ -27,6 +28,7 @@ const initialState: ProjectState = {
   currentAudioFileId: null,
   searchQuery: '',
   isGeneratingTranscript: false,
+  selectedSegmentIds: [],
 }
 
 const projectSlice = createSlice({
@@ -73,8 +75,16 @@ const projectSlice = createSlice({
       const audioFile = state.audioFiles.find((f) => f.id === audioFileId)
       if (audioFile) {
         state.isGeneratingTranscript = true
-        const segments = generateMockTranscript(audioFileId, audioFile.duration, state.speakers)
-        state.segments = [...state.segments.filter((s) => s.audioFileId !== audioFileId), ...segments]
+        const segments = generateMockTranscript(
+          audioFileId,
+          audioFile.duration,
+          state.speakers,
+          audioFile.name
+        )
+        state.segments = [
+          ...state.segments.filter((s) => s.audioFileId !== audioFileId),
+          ...segments,
+        ]
         state.isGeneratingTranscript = false
       }
     },
@@ -298,6 +308,14 @@ const projectSlice = createSlice({
       state.searchQuery = action.payload
     },
 
+    setSelectedSegments: (state, action: PayloadAction<string[]>) => {
+      state.selectedSegmentIds = action.payload
+    },
+
+    clearSelectedSegments: (state) => {
+      state.selectedSegmentIds = []
+    },
+
     loadProjectState: (
       state,
       action: PayloadAction<{
@@ -306,6 +324,8 @@ const projectSlice = createSlice({
         markers: Marker[]
         clips: Clip[]
         speakers: Speaker[]
+        currentAudioFileId?: string | null
+        selectedSegmentIds?: string[]
       }>
     ) => {
       state.audioFiles = action.payload.audioFiles
@@ -313,6 +333,12 @@ const projectSlice = createSlice({
       state.markers = action.payload.markers
       state.clips = action.payload.clips
       state.speakers = action.payload.speakers
+      if (action.payload.currentAudioFileId !== undefined) {
+        state.currentAudioFileId = action.payload.currentAudioFileId
+      }
+      if (action.payload.selectedSegmentIds !== undefined) {
+        state.selectedSegmentIds = action.payload.selectedSegmentIds
+      }
     },
   },
 })
@@ -339,6 +365,8 @@ export const {
   updateSpeaker,
   addSpeaker,
   setSearchQuery,
+  setSelectedSegments,
+  clearSelectedSegments,
   loadProjectState,
 } = projectSlice.actions
 

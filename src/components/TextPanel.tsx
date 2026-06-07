@@ -24,6 +24,8 @@ import {
   toggleSegmentAd,
   addAnnotation,
   setSearchQuery,
+  setSelectedSegments,
+  clearSelectedSegments,
 } from '@/store/slices/projectSlice'
 import { setCurrentTime } from '@/store/slices/playbackSlice'
 import { formatTime } from '@/utils/time'
@@ -33,7 +35,7 @@ export default function TextPanel() {
   const dispatch = useAppDispatch()
   const project = useAppSelector((state) => state.project)
   const playback = useAppSelector((state) => state.playback)
-  const [selectedSegments, setSelectedSegments] = useState<Set<string>>(new Set())
+  const selectedSegments = new Set(project.selectedSegmentIds)
   const [editingSegment, setEditingSegment] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
   const [showSpeakerMenu, setShowSpeakerMenu] = useState<string | null>(null)
@@ -87,13 +89,13 @@ export default function TextPanel() {
       } else {
         newSelected.add(segmentId)
       }
-      setSelectedSegments(newSelected)
+      dispatch(setSelectedSegments(Array.from(newSelected)))
     } else {
       const segment = currentSegments.find((s) => s.id === segmentId)
       if (segment) {
         dispatch(setCurrentTime(segment.startTime))
       }
-      setSelectedSegments(new Set([segmentId]))
+      dispatch(setSelectedSegments([segmentId]))
     }
   }
 
@@ -103,7 +105,7 @@ export default function TextPanel() {
       return
     }
     dispatch(mergeSegments(Array.from(selectedSegments)))
-    setSelectedSegments(new Set())
+    dispatch(clearSelectedSegments())
   }
 
   const handleSplit = (segmentId: string) => {

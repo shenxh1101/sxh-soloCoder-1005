@@ -7,6 +7,7 @@ import TextPanel from './components/TextPanel'
 import ClipsPanel from './components/ClipsPanel'
 import ExportPanel from './components/ExportPanel'
 import { loadProjectState } from './store/slices/projectSlice'
+import { loadHistoryFromStorageAction } from './store/slices/historySlice'
 import { generateDemoProject } from './utils/mockData'
 import { useAppDispatch } from './store'
 
@@ -15,6 +16,8 @@ function App() {
   const dispatch = useAppDispatch()
 
   useEffect(() => {
+    dispatch(loadHistoryFromStorageAction())
+    
     const demoData = generateDemoProject()
     dispatch(
       loadProjectState({
