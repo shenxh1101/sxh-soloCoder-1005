@@ -1,0 +1,232 @@
+import type { TranscriptSegment, Clip, ExportOptions, Marker } from '@/types'
+import { formatTime, formatSRTTime, formatVTTTime } from './time'
+
+export function generateTranscript(
+  segments: TranscriptSegment[],
+  speakers: { id: string; name: string }[],
+  options: ExportOptions
+): string {
+  const filteredSegments = segments
+    .filter((s) => options.includeDeletedSegments || !s.isDeleted)
+    .sort((a, b) => a.startTime - b.startTime)
+
+  const speakerMap = new Map(speakers.map((s) => [s.id, s.name]))
+
+  let transcript = ''
+
+  if (options.includeHeader) {
+    transcript += '='.repeat(60) + '\n'
+    transcript += '播客访谈文稿\n'
+    transcript += `生成时间: ${new Date().toLocaleString('zh-CN')}\n`
+    transcript += `总时长: ${formatTime(segments[segments.length - 1]?.endTime || 0)}\n`
+    transcript += '='.repeat(60) + '\n\n'
+  }
+
+  filteredSegments.forEach((segment, index) => {
+    const speakerName = speakerMap.get(segment.speaker) || segment.speaker
+
+    if (options.includeSpeakerNames) {
+      transcript += `[${speakerName}] `
+    }
+
+    if (options.includeTimecodes) {
+      transcript += `(${formatTime(segment.startTime)}-${formatTime(segment.endTime)}) `
+    }
+
+    transcript += segment.text
+
+    if (segment.isHighlight) {
+      transcript += ' ⭐'
+    }
+    if (segment.isAd) {
+      transcript += ' [广告]'
+    }
+    if (segment.isDeleted) {
+      transcript += ' [待删除]'
+    }
+
+    transcript += '\n'
+
+    if (options.includeAnnotations && segment.annotations.length > 0) {
+      segment.annotations.forEach((annotation) => {
+        const typeLabels = {
+          comment: '注释',
+          noise: '噪音',
+          important: '重要',
+          todo: '待办',
+        }
+        transcript += `  [${typeLabels[annotation.type]}]: ${annotation.content}\n`
+      })
+    }
+
+    if (index < filteredSegments.length - 1) {
+      transcript += '\n'
+    }
+  })
+
+  return transcript
+}
+
+export function generateSRT(segments: TranscriptSegment[]): string {
+  const filteredSegments = segments
+    .filter((s) => !s.isDeleted)
+    .sort((a, b) => a.startTime - b.startTime)
+
+  let srt = ''
+
+  filteredSegments.forEach((segment, index) => {
+    srt += `${index + 1}\n`
+    srt += `${formatSRTTime(segment.startTime)} --> ${formatSRTTime(segment.endTime)}\n`
+    srt += `${segment.text}\n\n`
+  })
+
+  return srt
+}
+
+export function generateVTT(segments: TranscriptSegment[]): string {
+  const filteredSegments = segments
+    .filter((s) => !s.isDeleted)
+    .sort((a, b) => a.startTime - b.startTime)
+
+  let vtt = 'WEBVTT\n\n'
+
+  filteredSegments.forEach((segment, index) => {
+    vtt += `${index + 1}\n`
+    vtt += `${formatVTTTime(segment.startTime)} --> ${formatVTTTime(segment.endTime)}\n`
+    vtt += `${segment.text}\n\n`
+  })
+
+  return vtt
+}
+
+export function generateClipList(clips: Clip[], segments: TranscriptSegment[]): string {
+  let list = ''
+
+  list += '='.repeat(60) + '\n'
+  list += '片段清单\n'
+  list += `生成时间: ${new Date().toLocaleString('zh-CN')}\n`
+  list += '='.repeat(60) + '\n\n'
+
+  const categories = [
+    { key: 'golden', label: '金句收藏' },
+    { key: 'to-delete', label: '待删片段' },
+    { key: 'ad', label: '广告口播' },
+    { key: 'custom', label: '自定义' },
+  ]
+
+  categories.forEach((category) => {
+    const categoryClips = clips.filter((c) => c.category === category.key)
+    if (categoryClips.length === 0) return
+
+    list += `## ${category.label} (${categoryClips.length})\n\n`
+
+    categoryClips.forEach((clip, index) => {
+      const clipSegments = segments.filter((s) => clip.segmentIds.includes(s.id))
+      const clipText = clipSegments.map((s) => s.text).join(' ')
+
+      list += `${index + 1}. ${clip.title}\n`
+      list += `   时间: ${formatTime(clip.startTime)} - ${formatTime(clip.endTime)} `
+      list += `(时长: ${formatTime(clip.endTime - clip.startTime)})\n`
+      if (clip.description) {
+        list += `   描述: ${clip.description}\n`
+      }
+      list += `   内容: ${clipText.slice(0, 100)}${clipText.length > 100 ? '...' : ''}\n\n`
+    })
+  })
+
+  return list
+}
+
+export function generateEditSuggestions(
+  segments: TranscriptSegment[],
+  markers: Marker[],
+  clips: Clip[]
+): string {
+  let suggestions = ''
+
+  suggestions += '='.repeat(60) + '\n'
+  suggestions += '剪辑建议\n'
+  suggestions += `生成时间: ${new Date().toLocaleString('zh-CN')}\n`
+  suggestions += '='.repeat(60) + '\n\n'
+
+  const deletedSegments = segments.filter((s) => s.isDeleted)
+  if (deletedSegments.length > 0) {
+    suggestions += `### 1. 待删除内容 (${deletedSegments.length}段)\n\n`
+    suggestions += `以下片段已标记为待删除，建议在最终剪辑时移除：\n\n`
+    deletedSegments.forEach((seg, idx) => {
+      suggestions += `${idx + 1}. ${formatTime(seg.startTime)} - ${formatTime(seg.endTime)}\n`
+      suggestions += `   ${seg.text.slice(0, 80)}...\n\n`
+    })
+  }
+
+  const adSegments = segments.filter((s) => s.isAd)
+  if (adSegments.length > 0) {
+    suggestions += `### 2. 广告口播 (${adSegments.length}段)\n\n`
+    suggestions += `以下片段包含广告内容：\n\n`
+    adSegments.forEach((seg, idx) => {
+      suggestions += `${idx + 1}. ${formatTime(seg.startTime)} - ${formatTime(seg.endTime)}\n`
+      suggestions += `   ${seg.text.slice(0, 80)}...\n\n`
+    })
+  }
+
+  const highlightSegments = segments.filter((s) => s.isHighlight)
+  if (highlightSegments.length > 0) {
+    suggestions += `### 3. 精彩片段 (${highlightSegments.length}段)\n\n`
+    suggestions += `以下片段内容精彩，建议在剪辑时重点保留或用作宣传素材：\n\n`
+    highlightSegments.forEach((seg, idx) => {
+      suggestions += `${idx + 1}. ${formatTime(seg.startTime)} - ${formatTime(seg.endTime)}\n`
+      suggestions += `   ${seg.text.slice(0, 100)}...\n\n`
+    })
+  }
+
+  const noiseMarkers = markers.filter((m) => m.type === 'noise')
+  if (noiseMarkers.length > 0) {
+    suggestions += `### 4. 噪音标记 (${noiseMarkers.length}处)\n\n`
+    suggestions += `以下位置存在噪音，建议进行音频修复：\n\n`
+    noiseMarkers.forEach((marker, idx) => {
+      suggestions += `${idx + 1}. ${formatTime(marker.time)} - ${marker.label}\n`
+    })
+    suggestions += '\n'
+  }
+
+  const goldenClips = clips.filter((c) => c.category === 'golden')
+  if (goldenClips.length > 0) {
+    suggestions += `### 5. 金句合集 (${goldenClips.length}个)\n\n`
+    suggestions += `以下金句片段可用于短视频剪辑或社交媒体推广：\n\n`
+    goldenClips.forEach((clip, idx) => {
+      suggestions += `${idx + 1}. ${clip.title}\n`
+      suggestions += `   ${formatTime(clip.startTime)} - ${formatTime(clip.endTime)}\n`
+      if (clip.description) {
+        suggestions += `   ${clip.description}\n`
+      }
+      suggestions += '\n'
+    })
+  }
+
+  suggestions += `### 6. 统计摘要\n\n`
+  const totalDuration = segments[segments.length - 1]?.endTime || 0
+  const deletedDuration = deletedSegments.reduce((acc, s) => acc + (s.endTime - s.startTime), 0)
+  const remainingDuration = totalDuration - deletedDuration
+
+  suggestions += `- 原始时长: ${formatTime(totalDuration)}\n`
+  suggestions += `- 删除内容: ${formatTime(deletedDuration)} (${((deletedDuration / totalDuration) * 100).toFixed(1)}%)\n`
+  suggestions += `- 预计最终时长: ${formatTime(remainingDuration)}\n`
+  suggestions += `- 说话人数: ${new Set(segments.map((s) => s.speaker)).size}\n`
+  suggestions += `- 分段数: ${segments.length}\n`
+  suggestions += `- 标记数: ${markers.length}\n`
+  suggestions += `- 片段数: ${clips.length}\n`
+
+  return suggestions
+}
+
+export function downloadFile(content: string, filename: string, mimeType: string): void {
+  const blob = new Blob([content], { type: mimeType })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
